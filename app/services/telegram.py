@@ -44,6 +44,8 @@ class TelegramService:
             },
         }
         data = await self._post("sendMessage", payload)
+        if not data:
+            return None
         result = data.get("result", {})
         return TelegramMessageRef(chat_id=str(result.get("chat", {}).get("id")), message_id=result.get("message_id"))
 
@@ -185,10 +187,17 @@ class TelegramService:
             return {}
 
         url = f"{self.settings.telegram_api_base}/bot{self.settings.telegram_bot_token}/{method}"
-        response = await request_with_retry("POST", url, json=payload, timeout=20.0)
-        data = response.json()
+        # Telegram is a best-effort notification side-channel: a failure here must
+        # never abort the analysis/proposal/work pipeline that produces value.
+        try:
+            response = await request_with_retry("POST", url, json=payload, timeout=20.0)
+            data = response.json()
+        except Exception:
+            logger.warning("Telegram %s request failed; continuing", method, exc_info=True)
+            return {}
         if not data.get("ok", False):
-            raise RuntimeError(f"Telegram API returned non-ok response for {method}: {data}")
+            logger.warning("Telegram %s returned non-ok response: %s", method, data)
+            return {}
         return data
 
     async def _post_file(self, method: str, payload: dict[str, Any], field_name: str, path: Path) -> dict[str, Any]:
@@ -201,14 +210,19 @@ class TelegramService:
             for key, value in payload.items()
             if value is not None
         }
-        with path.open("rb") as handle:
-            files = {field_name: (path.name, handle, "application/zip")}
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(url, data=data_payload, files=files)
-                response.raise_for_status()
-                data = response.json()
+        try:
+            with path.open("rb") as handle:
+                files = {field_name: (path.name, handle, "application/zip")}
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    response = await client.post(url, data=data_payload, files=files)
+                    response.raise_for_status()
+                    data = response.json()
+        except Exception:
+            logger.warning("Telegram %s file upload failed; continuing", method, exc_info=True)
+            return {}
         if not data.get("ok", False):
-            raise RuntimeError(f"Telegram API returned non-ok response for {method}: {data}")
+            logger.warning("Telegram %s returned non-ok response: %s", method, data)
+            return {}
         return data
 
     def _resolve_chat_id(self, job: Job, fallback_chat_id: str | int | None = None) -> str | int | None:
