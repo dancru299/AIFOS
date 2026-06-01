@@ -1,3 +1,4 @@
+import json
 import logging
 from dataclasses import dataclass
 from html import escape
@@ -8,7 +9,7 @@ import httpx
 
 from app.core.config import Settings
 from app.models import Job, ProjectTask, TaskScope
-
+from app.services.http import request_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -172,7 +173,7 @@ class TelegramService:
         if not self.settings.telegram_bot_token or not chat_id or message_id is None:
             return
 
-        payload = {
+        payload: dict[str, Any] = {
             "chat_id": chat_id,
             "message_id": message_id,
             "reply_markup": {"inline_keyboard": []},
@@ -184,10 +185,8 @@ class TelegramService:
             return {}
 
         url = f"{self.settings.telegram_api_base}/bot{self.settings.telegram_bot_token}/{method}"
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            response = await client.post(url, json=payload)
-            response.raise_for_status()
-            data = response.json()
+        response = await request_with_retry("POST", url, json=payload, timeout=20.0)
+        data = response.json()
         if not data.get("ok", False):
             raise RuntimeError(f"Telegram API returned non-ok response for {method}: {data}")
         return data
@@ -291,8 +290,6 @@ class TelegramService:
 
 
 def json_value(value: Any) -> str:
-    if isinstance(value, (dict, list)):
-        import json
-
+    if isinstance(value, dict | list):
         return json.dumps(value)
     return str(value)

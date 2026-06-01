@@ -1,13 +1,14 @@
+import secrets
 from html import escape
 from secrets import token_urlsafe
 
 import httpx
-from fastapi import APIRouter, Form, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from app.core.config import DEFAULT_RSS_FEED_URLS, get_settings
 from app.services.env_file import masked, read_env_values, update_env_values
-
 
 router = APIRouter(tags=["admin"])
 
@@ -15,8 +16,39 @@ ANALYST_PROVIDERS = ("auto", "gemini", "openai", "mock")
 PROPOSAL_PROVIDERS = ("auto", "gemini", "anthropic", "openai", "mock")
 WORKER_PROVIDERS = ("auto", "gemini", "anthropic", "openai", "mock")
 
+# Hosts allowed to reach /admin when no admin password is configured.
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
+_basic_auth = HTTPBasic(auto_error=False)
 
-@router.get("/admin", response_class=HTMLResponse)
+
+def require_admin(request: Request, credentials: HTTPBasicCredentials | None = Depends(_basic_auth)) -> None:
+    """Guard the admin UI. Requires HTTP Basic auth when AIFOS_ADMIN_PASSWORD is set;
+    otherwise restricts access to loopback callers only."""
+    settings = get_settings()
+
+    if not settings.admin_password:
+        host = request.client.host if request.client else ""
+        if host in _LOOPBACK_HOSTS:
+            return
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Admin password is not set; remote access to /admin is disabled.",
+        )
+
+    valid = (
+        credentials is not None
+        and secrets.compare_digest(credentials.username, settings.admin_username)
+        and secrets.compare_digest(credentials.password, settings.admin_password)
+    )
+    if not valid:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid admin credentials.",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+
+
+@router.get("/admin", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
 async def admin_page(request: Request, saved: str | None = None, webhook_url: str | None = None) -> HTMLResponse:
     settings = get_settings()
     env_values = read_env_values()
@@ -56,12 +88,12 @@ async def admin_page(request: Request, saved: str | None = None, webhook_url: st
     return HTMLResponse(content)
 
 
-@router.post("/admin/settings")
+@router.post("/admin/settings", dependencies=[Depends(require_admin)])
 async def update_admin_settings(
     analyst_provider: str = Form("auto"),
     proposal_provider: str = Form("auto"),
     worker_provider: str = Form("auto"),
-    gemini_model: str = Form("gemini-3.5-flash"),
+    gemini_model: str = Form("gemini-2.5-flash"),
     openai_model: str = Form("gpt-4o-mini"),
     anthropic_model: str = Form("claude-3-5-sonnet-20241022"),
     gemini_api_key: str = Form(""),
@@ -89,7 +121,7 @@ async def update_admin_settings(
         "AIFOS_ANALYST_PROVIDER": _valid_choice(analyst_provider, ANALYST_PROVIDERS, "auto"),
         "AIFOS_PROPOSAL_PROVIDER": _valid_choice(proposal_provider, PROPOSAL_PROVIDERS, "auto"),
         "AIFOS_WORKER_PROVIDER": _valid_choice(worker_provider, WORKER_PROVIDERS, "auto"),
-        "AIFOS_GEMINI_MODEL": gemini_model.strip() or "gemini-3.5-flash",
+        "AIFOS_GEMINI_MODEL": gemini_model.strip() or "gemini-2.5-flash",
         "AIFOS_OPENAI_MODEL": openai_model.strip() or "gpt-4o-mini",
         "AIFOS_ANTHROPIC_MODEL": anthropic_model.strip() or "claude-3-5-sonnet-20241022",
         "AIFOS_TELEGRAM_DEFAULT_CHAT_ID": telegram_chat_id.strip(),

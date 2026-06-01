@@ -1,13 +1,12 @@
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-import logging
 
 from app.core.config import Settings
 from app.models import Job, ProjectTask
 from app.services.llm import LLMTextService, load_json_object
 from app.services.workspace import WorkspacePaths
-
 
 logger = logging.getLogger(__name__)
 

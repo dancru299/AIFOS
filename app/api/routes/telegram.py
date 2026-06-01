@@ -6,9 +6,9 @@ from app.db import get_db
 from app.models import Job, JobStatus
 from app.schemas import TelegramWebhookUpdate
 from app.services.pipeline import process_approved_job, process_rejected_job, process_started_work
+from app.services.tasks import enqueue
 from app.services.telegram import TelegramService
 from app.state_machine import transition_job
-
 
 router = APIRouter(prefix="/api/v1/telegram", tags=["telegram"])
 
@@ -76,12 +76,13 @@ async def telegram_webhook(
             transition_job(job, JobStatus.GENERATING_PROPOSAL)
             job.last_error = None
             db.commit()
-            background_tasks.add_task(
+            await enqueue(
                 process_approved_job,
                 job.id,
                 callback.id,
                 callback_chat_id,
                 callback_message_id,
+                background_tasks=background_tasks,
             )
             return {"ok": True, "status": job.status.value}
 
@@ -94,12 +95,13 @@ async def telegram_webhook(
             transition_job(job, JobStatus.REJECTED)
             job.last_error = None
             db.commit()
-            background_tasks.add_task(
+            await enqueue(
                 process_rejected_job,
                 job.id,
                 callback.id,
                 callback_chat_id,
                 callback_message_id,
+                background_tasks=background_tasks,
             )
             return {"ok": True, "status": job.status.value}
 
@@ -114,13 +116,14 @@ async def telegram_webhook(
             db.commit()
             if callback.id:
                 background_tasks.add_task(TelegramService(settings).answer_callback_query, callback.id, "Starting sandbox work...")
-            background_tasks.add_task(
+            await enqueue(
                 process_started_work,
                 job.id,
                 None,
                 None,
                 None,
                 callback_chat_id,
+                background_tasks=background_tasks,
             )
             return {"ok": True, "status": job.status.value}
 

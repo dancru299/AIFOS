@@ -1,10 +1,8 @@
 import logging
 from typing import Any
 
-import httpx
-
 from app.core.config import Settings
-
+from app.services.http import request_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -37,10 +35,8 @@ class GeminiService:
             "x-goog-api-key": self.settings.gemini_api_key,
         }
 
-        async with httpx.AsyncClient(timeout=45.0) as client:
-            response = await client.post(url, headers=headers, json=payload)
-            response.raise_for_status()
-            data = response.json()
+        response = await request_with_retry("POST", url, headers=headers, json=payload, timeout=45.0)
+        data = response.json()
 
         text = _extract_text(data)
         if not text:

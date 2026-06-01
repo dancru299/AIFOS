@@ -9,7 +9,6 @@ from typing import Any
 import httpx
 from dotenv import load_dotenv
 
-
 ROOT = Path(__file__).resolve().parents[1]
 NGROK_API = "http://127.0.0.1:4040/api/tunnels"
 

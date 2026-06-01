@@ -1,0 +1,60 @@
+# Production-shaped local stack: API + Arq worker + Redis + Postgres.
+# Copy .env.example to .env first (provider keys, Telegram, etc.).
+# The infra-specific values below override anything in .env.
+
+x-app-env: &app-env
+  AIFOS_DATABASE_URL: postgresql+psycopg://aifos:aifos@postgres:5432/aifos
+  AIFOS_REDIS_URL: redis://redis:6379/0
+  AIFOS_TASK_BACKEND: arq
+  AIFOS_JSON_LOGS: "true"
+  AIFOS_METRICS_ENABLED: "true"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: aifos
+      POSTGRES_PASSWORD: aifos
+      POSTGRES_DB: aifos
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aifos"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    env_file: [.env]
+    environment: *app-env
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build: .
+    command: arq app.worker_arq.WorkerSettings
+    env_file: [.env]
+    environment: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  pgdata:

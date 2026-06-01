@@ -13,8 +13,20 @@ Requires-Dist: python-multipart<0.1,>=0.0.20
 Requires-Dist: pydantic-settings<2.11,>=2.10
 Requires-Dist: sqlalchemy<2.1,>=2.0
 Requires-Dist: uvicorn[standard]<0.36,>=0.35
+Requires-Dist: alembic<2,>=1.13
+Provides-Extra: arq
+Requires-Dist: arq<0.27,>=0.26; extra == "arq"
+Provides-Extra: postgres
+Requires-Dist: psycopg[binary]<4,>=3.2; extra == "postgres"
+Provides-Extra: metrics
+Requires-Dist: prometheus-client<0.22,>=0.21; extra == "metrics"
 Provides-Extra: dev
 Requires-Dist: pytest<9,>=8.3; extra == "dev"
+Requires-Dist: pytest-asyncio<0.25,>=0.24; extra == "dev"
+Requires-Dist: ruff<0.9,>=0.6; extra == "dev"
+Requires-Dist: mypy<2,>=1.11; extra == "dev"
+Requires-Dist: arq<0.27,>=0.26; extra == "dev"
+Requires-Dist: prometheus-client<0.22,>=0.21; extra == "dev"
 
 # AI Freelancer Operating System
 
@@ -189,3 +201,11 @@ curl -X POST http://127.0.0.1:8000/api/v1/jobs/ingest ^
 - The portfolio prompt source is a compact markdown file, not raw site HTML.
 - SQLite is used for MVP speed; the models are structured to migrate cleanly to PostgreSQL later.
 - Gemini is the first live LLM provider used when `GEMINI_API_KEY` is present. OpenAI and Anthropic remain optional fallbacks.
+
+## Architecture: reality vs PRD
+
+`prd-v1.md` is the original spec and is intentionally kept as-is. A few things drifted from it during implementation — this section is the source of truth:
+
+- **LLM provider:** the PRD planned `gpt-4o-mini` (Analyst) + `Claude 3.5 Sonnet` (Proposal/Worker). The implementation is **Gemini-first** (`gemini-2.5-flash` by default), with OpenAI and Anthropic as optional fallbacks. Provider routing is `auto` by default and configurable per stage via `AIFOS_ANALYST_PROVIDER` / `AIFOS_PROPOSAL_PROVIDER` / `AIFOS_WORKER_PROVIDER`.
+- **Job sources:** to stay within platform ToS, the Scout Agent does not scrape Upwork directly. It reads Gmail job-alert emails over IMAP ("Inbox Hunter") plus open RSS feeds (WeWorkRemotely, RemoteOK) and Reddit.
+- **Pipeline depth:** the PRD lists PM / Worker / QA / Delivery as "Future Horizon" (Phase 3-5). These are **already implemented** — the `jobs.status` flow goes through `in_progress -> qa_running -> delivery_ready`, generating files in a sandboxed workspace, running QA checks, and packaging a ZIP for delivery.

@@ -2,7 +2,6 @@ from textwrap import dedent
 
 from app.models import Job
 
-
 PROPOSAL_SYSTEM_PROMPT = """
 You are the Proposal Agent for AI Freelancer OS.
 

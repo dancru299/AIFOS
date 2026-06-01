@@ -10,7 +10,6 @@ from app.services.scouts.reddit import RedditScout
 from app.services.scouts.rss import RssScout
 from app.services.scouts.types import ScoutJob
 
-
 logger = logging.getLogger(__name__)
 
 
