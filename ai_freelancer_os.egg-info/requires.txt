@@ -1,0 +1,12 @@
+beautifulsoup4<5,>=4.12
+feedparser<7,>=6.0
+fastapi<0.117,>=0.116
+httpx<0.29,>=0.28
+python-dotenv<2,>=1.0
+python-multipart<0.1,>=0.0.20
+pydantic-settings<2.11,>=2.10
+sqlalchemy<2.1,>=2.0
+uvicorn[standard]<0.36,>=0.35
+
+[dev]
+pytest<9,>=8.3

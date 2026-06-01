@@ -1,0 +1,2 @@
+"""Scout Agent source adapters."""
+
