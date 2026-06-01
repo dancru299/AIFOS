@@ -6,8 +6,8 @@ from app.db import get_db
 from app.models import Job, JobStatus
 from app.schemas import JobIngestRequest, JobIngestResponse, JobRead, JobStartWorkRequest, JobStartWorkResponse
 from app.services.pipeline import analyze_job, process_started_work
+from app.services.tasks import enqueue
 from app.state_machine import transition_job
-
 
 router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
 
@@ -32,7 +32,7 @@ async def ingest_job(payload: JobIngestRequest, background_tasks: BackgroundTask
     db.commit()
     db.refresh(job)
 
-    background_tasks.add_task(analyze_job, job.id)
+    await enqueue(analyze_job, job.id, background_tasks=background_tasks)
     return JobIngestResponse(job_id=job.id, status=job.status)
 
 
@@ -73,12 +73,13 @@ async def start_work(
     db.commit()
     db.refresh(job)
 
-    background_tasks.add_task(
+    await enqueue(
         process_started_work,
         job.id,
         payload.task_scope,
         payload.task_title,
         payload.instructions,
         None,
+        background_tasks=background_tasks,
     )
     return JobStartWorkResponse(job_id=job.id, status=job.status, workspace_path=job.workspace_path)
