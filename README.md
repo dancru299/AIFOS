@@ -176,7 +176,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/jobs/ingest ^
 
 `prd-v1.md` is the original spec and is intentionally kept as-is. A few things drifted from it during implementation — this section is the source of truth:
 
-- **LLM provider:** the PRD planned `gpt-4o-mini` (Analyst) + `Claude 3.5 Sonnet` (Proposal/Worker). The implementation is **Gemini-first** (`gemini-2.5-flash` by default), with OpenAI and Anthropic as optional fallbacks. Provider routing is `auto` by default and configurable per stage via `AIFOS_ANALYST_PROVIDER` / `AIFOS_PROPOSAL_PROVIDER` / `AIFOS_WORKER_PROVIDER`.
+- **LLM provider:** the PRD planned `gpt-4o-mini` (Analyst) + `Claude 3.5 Sonnet` (Proposal/Worker). The implementation is **Gemini-first** (`gemini-2.5-flash` by default), with OpenAI and Anthropic as optional fallbacks. Provider routing is `auto` by default and configurable per stage via `AIFOS_ANALYST_PROVIDER` / `AIFOS_PROPOSAL_PROVIDER` / `AIFOS_WORKER_PROVIDER`. In `auto` mode each outbound LLM call retries the same provider on transient errors, then **falls through to the next configured key** (Gemini → Anthropic → OpenAI), so a bad/overloaded key hands off automatically. Pinning an explicit provider disables that fallback.
 - **Job sources:** to stay within platform ToS, the Scout Agent does not scrape Upwork directly. It reads Gmail job-alert emails over IMAP ("Inbox Hunter") plus open RSS feeds (WeWorkRemotely, RemoteOK) and Reddit.
 - **Pipeline depth:** the PRD lists PM / Worker / QA / Delivery as "Future Horizon" (Phase 3-5). These are **already implemented** — the `jobs.status` flow goes through `in_progress -> qa_running -> delivery_ready`, generating files in a sandboxed workspace, running QA checks, and packaging a ZIP for delivery.
 
