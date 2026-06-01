@@ -76,6 +76,9 @@ async def admin_page(request: Request, saved: str | None = None, webhook_url: st
         gmail_search_window_days=env_values.get("AIFOS_GMAIL_SEARCH_WINDOW_DAYS", str(settings.gmail_search_window_days)),
         reddit_subreddits=env_values.get("AIFOS_REDDIT_SUBREDDITS", settings.reddit_subreddits),
         reddit_user_agent=env_values.get("AIFOS_REDDIT_USER_AGENT", settings.reddit_user_agent),
+        threads_target_usernames=env_values.get("AIFOS_THREADS_TARGET_USERNAMES", settings.threads_target_usernames),
+        threads_keywords=env_values.get("AIFOS_THREADS_KEYWORDS", settings.threads_keywords),
+        threads_token=env_values.get("AIFOS_THREADS_API_TOKEN"),
         gemini_key=env_values.get("GEMINI_API_KEY") or env_values.get("AIFOS_GEMINI_API_KEY"),
         openai_key=env_values.get("AIFOS_OPENAI_API_KEY"),
         anthropic_key=env_values.get("AIFOS_ANTHROPIC_API_KEY"),
@@ -115,6 +118,9 @@ async def update_admin_settings(
     gmail_search_window_days: str = Form("2"),
     reddit_subreddits: str = Form("forhire,freelance_forhire"),
     reddit_user_agent: str = Form("AI-Freelancer-OS/0.1 by dancru299"),
+    threads_api_token: str = Form(""),
+    threads_target_usernames: str = Form(""),
+    threads_keywords: str = Form(""),
 ):
     current_env = read_env_values()
     updates = {
@@ -137,6 +143,8 @@ async def update_admin_settings(
         "AIFOS_GMAIL_SEARCH_WINDOW_DAYS": gmail_search_window_days.strip() or "2",
         "AIFOS_REDDIT_SUBREDDITS": reddit_subreddits.strip() or "forhire,freelance_forhire",
         "AIFOS_REDDIT_USER_AGENT": reddit_user_agent.strip() or "AI-Freelancer-OS/0.1 by dancru299",
+        "AIFOS_THREADS_TARGET_USERNAMES": threads_target_usernames.strip(),
+        "AIFOS_THREADS_KEYWORDS": threads_keywords.strip(),
     }
 
     if telegram_webhook_secret.strip():
@@ -154,6 +162,8 @@ async def update_admin_settings(
         updates["AIFOS_TELEGRAM_BOT_TOKEN"] = telegram_bot_token.strip()
     if gmail_app_password.strip():
         updates["AIFOS_GMAIL_APP_PASSWORD"] = gmail_app_password.strip()
+    if threads_api_token.strip():
+        updates["AIFOS_THREADS_API_TOKEN"] = threads_api_token.strip()
 
     update_env_values(updates)
     return RedirectResponse("/admin?saved=1", status_code=303)
@@ -202,6 +212,9 @@ def _render_admin_page(
     gmail_search_window_days: str,
     reddit_subreddits: str,
     reddit_user_agent: str,
+    threads_target_usernames: str,
+    threads_keywords: str,
+    threads_token: str | None,
     saved: bool,
     webhook_url: str | None,
     webhook_info: dict,
@@ -429,6 +442,7 @@ def _render_admin_page(
           {_status_item("Anthropic", anthropic_key)}
           {_status_item("Telegram bot", telegram_token)}
           {_status_item("Gmail IMAP", gmail_app_password if gmail_email else None)}
+          {_status_item("Threads API", threads_token if threads_target_usernames else None)}
         </div>
       </section>
 
@@ -532,6 +546,21 @@ def _render_admin_page(
             <input id="reddit_user_agent" name="reddit_user_agent" value="{escape(reddit_user_agent)}">
           </div>
         </div>
+        <div class="row" style="margin-top:14px">
+          <div>
+            <label for="threads_target_usernames">Threads target usernames</label>
+            <input id="threads_target_usernames" name="threads_target_usernames" value="{escape(threads_target_usernames)}" placeholder="@founder1, @indiehacker2 (comma-separated)">
+          </div>
+          <div>
+            <label for="threads_api_token">Threads API token</label>
+            <input id="threads_api_token" name="threads_api_token" placeholder="Current: {escape(masked(threads_token))}. Leave blank to keep it.">
+          </div>
+        </div>
+        <div>
+          <label for="threads_keywords">Threads hiring keywords</label>
+          <input id="threads_keywords" name="threads_keywords" value="{escape(threads_keywords)}" placeholder="hiring, need a dev, mvp, fix bug">
+        </div>
+        <p class="help">Watches a whitelist of public Threads profiles via the official Profile Discovery API (no global search). Needs <b>Advanced Access</b> (App Review) for non-Meta accounts; cap is 1,000 requests/24h and targets need ≥100 followers — keep <code>targets × cycles/day ≤ 1000</code>.</p>
       </section>
 
       <section class="panel full">

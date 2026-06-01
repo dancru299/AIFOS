@@ -10,6 +10,7 @@ ScoutSource = Literal[
     "weworkremotely",
     "remoteok",
     "hackernews",
+    "threads",
 ]
 
 

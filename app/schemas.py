@@ -7,7 +7,7 @@ from app.models import JobStatus, TaskScope
 
 
 class JobIngestRequest(BaseModel):
-    source: Literal["upwork", "linkedin", "reddit", "x", "rss", "weworkremotely", "remoteok", "hackernews"]
+    source: Literal["upwork", "linkedin", "reddit", "x", "rss", "weworkremotely", "remoteok", "hackernews", "threads"]
     external_url: str = Field(min_length=1, max_length=2048)
     title: str = Field(min_length=1, max_length=512)
     description_raw: str = Field(min_length=1)

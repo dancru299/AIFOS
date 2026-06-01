@@ -149,6 +149,21 @@ python scripts/run_scouts.py
 
 Open RSS sources are still supported through `AIFOS_RSS_FEED_URLS`. The default legal/open feeds are WeworkRemotely programming jobs and RemoteOK remote jobs. You can add a Hacker News "Who is Hiring" RSS bridge URL to the same comma-separated setting.
 
+### Threads Scout (user-centric)
+
+Threads has **no public keyword-search API**, so this scout watches a curated whitelist of high-signal profiles (founders, indie hackers, hiring hubs) via the official **Profile Discovery** endpoint and keeps posts matching hiring keywords. It activates only when both a token and target usernames are set:
+
+```bash
+AIFOS_THREADS_API_TOKEN=your-threads-access-token
+AIFOS_THREADS_TARGET_USERNAMES=@founder1,@indiehacker2,@agencyhub
+# optional: AIFOS_THREADS_KEYWORDS, AIFOS_THREADS_USER_ID (default "me")
+```
+
+Access reality check before you rely on it:
+- Reading **non-Meta** profiles requires **Advanced Access** via Meta App Review. With Standard Access the endpoint only returns Meta's own accounts (`@meta`, `@threads`, ...), so it is useless for scouting until approved.
+- Targets need **≥100 followers**; the endpoint allows **1,000 requests / 24h**. One request = one profile, so keep `targets × cycles_per_day ≤ 1000` (e.g. ~20 targets at a 30-min interval, or ~80 targets at ~2h).
+- **Fast lane without App Review:** turn a public Threads profile into RSS (RSSHub / rss.app) and paste it into `AIFOS_RSS_FEED_URLS` — it ingests as `source=rss` with zero extra setup.
+
 ## Local behavior without API keys
 
 If `AIFOS_ALLOW_MOCK_LLM=true` and the provider keys are empty:
@@ -177,7 +192,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/jobs/ingest ^
 `prd-v1.md` is the original spec and is intentionally kept as-is. A few things drifted from it during implementation — this section is the source of truth:
 
 - **LLM provider:** the PRD planned `gpt-4o-mini` (Analyst) + `Claude 3.5 Sonnet` (Proposal/Worker). The implementation is **Gemini-first** (`gemini-2.5-flash` by default), with OpenAI and Anthropic as optional fallbacks. Provider routing is `auto` by default and configurable per stage via `AIFOS_ANALYST_PROVIDER` / `AIFOS_PROPOSAL_PROVIDER` / `AIFOS_WORKER_PROVIDER`. In `auto` mode each outbound LLM call retries the same provider on transient errors, then **falls through to the next configured key** (Gemini → Anthropic → OpenAI), so a bad/overloaded key hands off automatically. Pinning an explicit provider disables that fallback.
-- **Job sources:** to stay within platform ToS, the Scout Agent does not scrape Upwork directly. It reads Gmail job-alert emails over IMAP ("Inbox Hunter") plus open RSS feeds (WeWorkRemotely, RemoteOK) and Reddit.
+- **Job sources:** to stay within platform ToS, the Scout Agent does not scrape Upwork directly. It reads Gmail job-alert emails over IMAP ("Inbox Hunter") plus open RSS feeds (WeWorkRemotely, RemoteOK), Reddit, and an optional curated Threads whitelist via the official Profile Discovery API.
 - **Pipeline depth:** the PRD lists PM / Worker / QA / Delivery as "Future Horizon" (Phase 3-5). These are **already implemented** — the `jobs.status` flow goes through `in_progress -> qa_running -> delivery_ready`, generating files in a sandboxed workspace, running QA checks, and packaging a ZIP for delivery.
 
 ## Autonomous worker (Claude Code engine)

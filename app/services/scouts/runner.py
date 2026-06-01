@@ -8,6 +8,7 @@ from app.core.config import Settings
 from app.services.scouts.gmail_fetcher import GmailInboxScout
 from app.services.scouts.reddit import RedditScout
 from app.services.scouts.rss import RssScout
+from app.services.scouts.threads import ThreadsScout
 from app.services.scouts.types import ScoutJob
 
 logger = logging.getLogger(__name__)
@@ -90,6 +91,22 @@ class ScoutRunner:
                 )
             except Exception as exc:
                 logger.warning("Reddit scout failed: %s", exc)
+
+        if self.settings.threads_enabled:
+            try:
+                jobs.extend(
+                    await ThreadsScout(
+                        access_token=self.settings.threads_api_token or "",
+                        usernames=self.settings.parsed_threads_target_usernames,
+                        keywords=self.settings.parsed_threads_keywords,
+                        node=self.settings.threads_user_id,
+                        api_base=self.settings.threads_api_base,
+                        api_version=self.settings.threads_api_version,
+                        limit_per_user=self.settings.scout_limit_per_source,
+                    ).fetch_jobs()
+                )
+            except Exception:
+                logger.exception("Threads scout failed.")
 
         return _dedupe(jobs)
 

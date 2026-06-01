@@ -38,6 +38,23 @@ class Settings(BaseSettings):
     upwork_rss_urls: str = ""
     reddit_subreddits: str = "forhire,freelance_forhire"
     reddit_user_agent: str = "windows:ai-freelancer-os:v0.1 (by /u/dancru299)"
+
+    # Threads Scout (official Profile Discovery API). There is no public keyword
+    # search, so we poll a curated whitelist of target handles. Reading non-Meta
+    # profiles needs Advanced Access (App Review); the endpoint allows 1,000
+    # requests / 24h and only profiles with >=100 followers. One request == one
+    # profile, so keep len(targets) * cycles_per_day <= 1000.
+    threads_api_token: str | None = None
+    # The caller's own app-scoped Threads user id used as the discovery node.
+    # "me" works for most setups; set the numeric id if your app requires it.
+    threads_user_id: str = "me"
+    threads_target_usernames: str = ""
+    threads_keywords: str = (
+        "hiring,need a dev,looking for,freelancer,build a,mvp,fix bug,"
+        "landing page,ghostwriter,developer wanted,need help with,scrape"
+    )
+    threads_api_base: str = "https://graph.threads.net"
+    threads_api_version: str = "v1.0"
     gmail_imap_host: str = "imap.gmail.com"
     gmail_imap_port: int = 993
     gmail_email: str | None = None
@@ -145,6 +162,18 @@ class Settings(BaseSettings):
     @property
     def parsed_reddit_subreddits(self) -> list[str]:
         return _split_config_list(self.reddit_subreddits)
+
+    @property
+    def parsed_threads_target_usernames(self) -> list[str]:
+        return [name.lstrip("@") for name in _split_config_list(self.threads_target_usernames)]
+
+    @property
+    def parsed_threads_keywords(self) -> list[str]:
+        return _split_config_list(self.threads_keywords)
+
+    @property
+    def threads_enabled(self) -> bool:
+        return bool(self.threads_api_token and self.parsed_threads_target_usernames)
 
 
 @lru_cache
