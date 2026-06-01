@@ -200,11 +200,13 @@ Flow (per job, after you tap **Start Work**):
 
 If you want fewer interruptions, set `AIFOS_AGENT_PLAN_GATE=false`: Claude Code still writes `PLAN.md`, but then immediately executes it and only asks you to review once QA says the job is done or needs a human decision.
 
+When the reviewer finishes, the Telegram card carries action buttons so you never get stuck: **✅ Nghiệm thu / 🔁 Làm lại** when it passes, **🔁 Làm lại** when it stalls (re-runs the planner/worker). Anything the agent recorded in `QUESTIONS.md` is quoted directly in that message, so the things only you can answer surface in chat instead of staying buried in the folder.
+
 **Safety & cost:**
 - File edits are confined to the job folder (`cwd` + `--add-dir`).
 - The **plan gate** is the main human checkpoint — you reject before the expensive execute run. `AIFOS_AGENT_MAX_TURNS`, `AIFOS_AGENT_RUN_TIMEOUT_SECONDS`, and `AIFOS_AGENT_MAX_REPAIRS` bound each job.
-- **Shell permission mode** (`AIFOS_AGENT_PERMISSION_MODE`): on **Windows** only `bypassPermissions` actually lets the agent run tests/builds headless, so that is the default — meaning the agent can run shell commands freely inside its run. Mitigate by running on your own machine, pointing `AIFOS_DELIVERY_ROOT` at a dedicated workspace folder (not a system dir), and using the plan gate. On **Linux/macOS/containers** set it to `default` to enforce a command allow/deny list (only safe prefixes like `python`/`pip`/`pytest`/`npm` run; `rm`/`sudo`/`git push`/`ssh` are denied).
-- **Each job consumes real Claude Code usage** (billed via your Claude Code login). Always review the deliverable before sending it to a client.
+- **Shell permission mode** (`AIFOS_AGENT_PERMISSION_MODE`): on **Windows** only `bypassPermissions` actually lets the agent run tests/builds headless, so that is the default. ⚠️ In this mode the allow/deny guardrail in `app/services/agent/guardrail.py` is **not enforced at runtime** — the agent can run *any* shell command on the host. Mitigate by pointing `AIFOS_DELIVERY_ROOT` at a dedicated workspace — ideally inside a container or VM — and keeping the plan gate on. On **Linux/macOS/containers** set it to `default` to enforce the command allow/deny list (only safe prefixes like `python`/`pip`/`pytest`/`npm` run; `rm`/`sudo`/`git push`/`ssh` are denied). To enforce the deny list **even under `bypassPermissions`**, set `AIFOS_AGENT_ENFORCE_GUARDRAIL_HOOK=true`: the runner drops a `.claude/settings.json` into each job folder wiring a **PreToolUse hook** (`guard_hook.py`) that blocks destructive Bash commands at runtime. Default off.
+- **Each job consumes real Claude Code usage** (billed via your Claude Code login, logged per run as turns + USD). Always review the deliverable before sending it to a client.
 
 ## Run on your own machine (no public URL needed)
 

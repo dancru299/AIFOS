@@ -124,6 +124,7 @@ class TelegramService:
             "inline_keyboard": [
                 [
                     {"text": "\U0001F680 GitHub PR (soon)", "callback_data": f"github_pr_{job.id}"},
+                    {"text": "\U0001F501 Làm lại", "callback_data": f"start_{job.id}"},
                 ]
             ]
         }
@@ -161,6 +162,13 @@ class TelegramService:
             "text": self._render_work_failed(job, reason),
             "parse_mode": "HTML",
             "disable_web_page_preview": True,
+            "reply_markup": {
+                "inline_keyboard": [
+                    [
+                        {"text": "\U0001F501 Làm lại", "callback_data": f"start_{job.id}"},
+                    ]
+                ]
+            },
         }
         await self._post("sendMessage", payload)
 
@@ -195,7 +203,13 @@ class TelegramService:
         }
         await self._post("sendMessage", payload)
 
-    async def send_review_ready(self, job: Job, review: Any, chat_id: str | int | None = None) -> None:
+    async def send_review_ready(
+        self,
+        job: Job,
+        review: Any,
+        chat_id: str | int | None = None,
+        questions: str | None = None,
+    ) -> None:
         target_chat_id = self._resolve_chat_id(job, chat_id)
         if not self.settings.telegram_bot_token or not target_chat_id:
             logger.info("Telegram is not configured; skipping review-ready notice for job %s", job.id)
@@ -210,17 +224,35 @@ class TelegramService:
         if blockers:
             items = "\n".join(f"• {escape(str(b))}" for b in blockers[:6])
             block_text = f"\n\n<b>Cần bạn / còn thiếu:</b>\n{items}"
+        # Questions the agent itself raised (QUESTIONS.md) — the things only a
+        # human can answer. Surface them so the operator isn't left digging.
+        question_text = ""
+        if questions and questions.strip():
+            q_excerpt = escape(questions.strip())
+            if len(q_excerpt) > 800:
+                q_excerpt = q_excerpt[:800] + "\n..."
+            question_text = f"\n\n<b>❓ Agent hỏi (QUESTIONS.md):</b>\n<pre>{q_excerpt}</pre>"
         text = (
             f"{head}  ({percent}% complete)\n\n"
             f"<b>{escape(job.title)}</b>\n"
             f"<b>Folder:</b> <code>{escape(job.delivery_path or job.workspace_path or 'n/a')}</code>\n\n"
-            f"<b>Verdict:</b> {summary}{block_text}"
+            f"<b>Verdict:</b> {summary}{block_text}{question_text}"
         )
+        if done:
+            keyboard = [
+                [
+                    {"text": "✅ Nghiệm thu", "callback_data": f"accept_{job.id}"},
+                    {"text": "\U0001F501 Làm lại", "callback_data": f"start_{job.id}"},
+                ]
+            ]
+        else:
+            keyboard = [[{"text": "\U0001F501 Làm lại", "callback_data": f"start_{job.id}"}]]
         payload = {
             "chat_id": target_chat_id,
             "text": text,
             "parse_mode": "HTML",
             "disable_web_page_preview": True,
+            "reply_markup": {"inline_keyboard": keyboard},
         }
         await self._post("sendMessage", payload)
 

@@ -98,6 +98,10 @@ class Settings(BaseSettings):
     # on Windows); "default"/"acceptEdits" enforce the allow/deny command lists
     # (works on Linux/macOS/containers but blocks many commands on Windows).
     agent_permission_mode: str = "bypassPermissions"
+    # Opt-in: under bypassPermissions the allow/deny lists are ignored, so enable
+    # this to install a PreToolUse hook (guard_hook.py) that denies destructive
+    # Bash commands at runtime. Default off = unchanged behavior.
+    agent_enforce_guardrail_hook: bool = False
 
     @property
     def project_root(self) -> Path:

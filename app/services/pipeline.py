@@ -403,6 +403,8 @@ async def execute_approved_plan(job_id: str, callback_chat_id: str | int | None 
 
         review_result = await worker_agent.review(job, folder, settings)
         _write_review_report(folder, review_result, attempt)
+        # Surface anything the agent explicitly flagged for the human.
+        questions = read_text_if_exists(folder / "QUESTIONS.md", limit=1500)
 
         if review_result.passed:
             ready_job = None
@@ -415,7 +417,7 @@ async def execute_approved_plan(job_id: str, callback_chat_id: str | int | None 
                         transition_job(job, JobStatus.DELIVERY_READY)
                     ready_job = job
             if ready_job:
-                await telegram_service.send_review_ready(ready_job, review_result, callback_chat_id)
+                await telegram_service.send_review_ready(ready_job, review_result, callback_chat_id, questions=questions)
             return
 
         previous_review = review_result
@@ -430,7 +432,7 @@ async def execute_approved_plan(job_id: str, callback_chat_id: str | int | None 
                 if not should_retry:
                     final_job = job
         if final_job:
-            await telegram_service.send_review_ready(final_job, review_result, callback_chat_id)
+            await telegram_service.send_review_ready(final_job, review_result, callback_chat_id, questions=questions)
             return
 
 

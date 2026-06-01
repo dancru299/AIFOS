@@ -46,6 +46,7 @@ async def plan(job: Job, folder: Path, settings: Settings) -> AgentRun:
         permission_mode=settings.agent_permission_mode,
         max_turns=min(settings.agent_max_turns, 20),
         timeout_seconds=settings.agent_run_timeout_seconds,
+        enforce_guardrail_hook=settings.agent_enforce_guardrail_hook,
     )
 
 
@@ -77,6 +78,7 @@ async def execute(job: Job, folder: Path, settings: Settings, previous_review: R
         permission_mode=settings.agent_permission_mode,
         max_turns=settings.agent_max_turns,
         timeout_seconds=settings.agent_run_timeout_seconds,
+        enforce_guardrail_hook=settings.agent_enforce_guardrail_hook,
     )
 
 
@@ -96,6 +98,7 @@ async def review(job: Job, folder: Path, settings: Settings) -> ReviewResult:
         permission_mode=settings.agent_permission_mode,
         max_turns=min(settings.agent_max_turns, 20),
         timeout_seconds=settings.agent_run_timeout_seconds,
+        enforce_guardrail_hook=settings.agent_enforce_guardrail_hook,
     )
     if not run.ok:
         return ReviewResult(

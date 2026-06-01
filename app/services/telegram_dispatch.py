@@ -44,11 +44,13 @@ def parse_callback_data(data: str) -> tuple[str | None, str | None]:
         ("plan_ok_", "plan_ok"),
         ("plan_no_", "plan_no"),
         ("start_", "start"),
+        ("accept_", "accept"),
         ("github_pr_", "github_pr"),
         ("approve:", "approve"),
         ("dismiss:", "reject"),
         ("reject:", "reject"),
         ("start:", "start"),
+        ("accept:", "accept"),
     ):
         if data.startswith(prefix):
             return action, data.removeprefix(prefix)
@@ -112,6 +114,12 @@ async def dispatch_callback(
             job.last_error = None
             intent, ack = "ack", "Đã huỷ kế hoạch."
             response = {"ok": True, "status": JobStatus.PROPOSAL_READY.value, "detail": "plan_rejected"}
+            clear_keyboard = True
+        elif action == "accept":
+            # Human sign-off on a finished deliverable. No state change (the job
+            # stays delivery_ready); we just acknowledge and drop the buttons.
+            intent, ack = "ack", "Đã nghiệm thu ✅. Cảm ơn bạn!"
+            response = {"ok": True, "status": current.value, "detail": "accepted"}
             clear_keyboard = True
         elif action in {"approve", "reject"}:
             intent, ack = "ack", "Already processed."

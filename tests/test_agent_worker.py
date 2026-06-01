@@ -1,4 +1,7 @@
+import json
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -11,6 +14,17 @@ from app.services.agent import worker_agent
 from app.services.agent.claude_runner import AgentRun
 from app.services.agent.guardrail import is_command_blocked
 from app.services.agent.job_folder import create_job_folder
+
+GUARD_HOOK = Path(__file__).resolve().parents[1] / "app" / "services" / "agent" / "guard_hook.py"
+
+
+def _run_guard_hook(payload: str) -> int:
+    return subprocess.run(
+        [sys.executable, str(GUARD_HOOK)],
+        input=payload,
+        capture_output=True,
+        text=True,
+    ).returncode
 
 
 @pytest.fixture
@@ -57,6 +71,20 @@ def test_guardrail_blocks_dangerous_commands():
     assert not is_command_blocked("pip install requests")
     assert not is_command_blocked("python -m pytest -q")
     assert not is_command_blocked("npm install")
+
+
+def test_guard_hook_blocks_dangerous_command_exit_2():
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "rm -rf /"}})
+    assert _run_guard_hook(payload) == 2
+
+
+def test_guard_hook_allows_safe_command_exit_0():
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "pytest -q"}})
+    assert _run_guard_hook(payload) == 0
+
+
+def test_guard_hook_fails_open_on_bad_input():
+    assert _run_guard_hook("not json") == 0
 
 
 async def test_start_planning_writes_plan_and_awaits_approval(agent_env, monkeypatch):

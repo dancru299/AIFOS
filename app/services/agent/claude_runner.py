@@ -11,12 +11,38 @@ import json
 import logging
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.services.agent.guardrail import ALLOWED_TOOLS, DISALLOWED_TOOL_RULES
 
 logger = logging.getLogger(__name__)
+
+
+def _install_guardrail_hook(folder: Path) -> None:
+    """Write a project ``.claude/settings.json`` that runs guard_hook.py before
+    every Bash call, so destructive commands are denied even under
+    bypassPermissions. Best-effort: a write failure must not abort the run."""
+    hook_script = Path(__file__).resolve().parent / "guard_hook.py"
+    settings = {
+        "hooks": {
+            "PreToolUse": [
+                {
+                    "matcher": "Bash",
+                    "hooks": [
+                        {"type": "command", "command": f'"{sys.executable}" "{hook_script}"'}
+                    ],
+                }
+            ]
+        }
+    }
+    try:
+        claude_dir = folder / ".claude"
+        claude_dir.mkdir(parents=True, exist_ok=True)
+        (claude_dir / "settings.json").write_text(json.dumps(settings, indent=2), encoding="utf-8")
+    except OSError:
+        logger.warning("Could not install guardrail hook in %s; continuing", folder, exc_info=True)
 
 
 @dataclass
@@ -37,6 +63,7 @@ async def run_claude_code(
     max_turns: int = 60,
     timeout_seconds: int = 1800,
     permission_mode: str = "bypassPermissions",
+    enforce_guardrail_hook: bool = False,
 ) -> AgentRun:
     """Drive Claude Code over a single task in ``folder`` and return the result."""
     exe = shutil.which(claude_bin) or claude_bin
@@ -44,6 +71,11 @@ async def run_claude_code(
         return AgentRun(ok=False, error=f"Claude Code CLI not found: {claude_bin}")
 
     folder.mkdir(parents=True, exist_ok=True)
+
+    # bypassPermissions ignores the allow/deny lists, so a PreToolUse hook is the
+    # only way to enforce the deny policy at runtime. Opt-in via settings.
+    if enforce_guardrail_hook and permission_mode == "bypassPermissions":
+        _install_guardrail_hook(folder)
 
     args = [
         exe,
@@ -77,7 +109,13 @@ async def run_claude_code(
         logger.exception("Failed to launch Claude Code")
         return AgentRun(ok=False, error=str(exc))
 
-    return _parse_stream(completed.stdout, completed.stderr, completed.returncode)
+    run = _parse_stream(completed.stdout, completed.stderr, completed.returncode)
+    cost = f"${run.cost_usd:.4f}" if run.cost_usd is not None else "n/a"
+    logger.info(
+        "Claude Code run finished: ok=%s turns=%s cost=%s folder=%s",
+        run.ok, run.num_turns, cost, folder.name,
+    )
+    return run
 
 
 def _parse_stream(stdout: str, stderr: str, returncode: int) -> AgentRun:
