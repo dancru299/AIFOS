@@ -180,6 +180,32 @@ curl -X POST http://127.0.0.1:8000/api/v1/jobs/ingest ^
 - **Job sources:** to stay within platform ToS, the Scout Agent does not scrape Upwork directly. It reads Gmail job-alert emails over IMAP ("Inbox Hunter") plus open RSS feeds (WeWorkRemotely, RemoteOK) and Reddit.
 - **Pipeline depth:** the PRD lists PM / Worker / QA / Delivery as "Future Horizon" (Phase 3-5). These are **already implemented** — the `jobs.status` flow goes through `in_progress -> qa_running -> delivery_ready`, generating files in a sandboxed workspace, running QA checks, and packaging a ZIP for delivery.
 
+## Autonomous worker (Claude Code engine)
+
+By default the worker (`AIFOS_WORKER_ENGINE=scaffold`) generates a one-shot draft and a ZIP. Set `AIFOS_WORKER_ENGINE=claude_code` to instead run **Claude Code as an autonomous agent** that plans, writes real code, runs/tests it, and iterates — handing you a finished, review-ready deliverable in a folder.
+
+```bash
+# .env
+AIFOS_WORKER_ENGINE=claude_code
+AIFOS_DELIVERY_ROOT=D:/work/aifos-jobs   # a folder you control and open to review
+AIFOS_CLAUDE_BIN=claude                  # uses the CLI's existing login; no API key
+```
+
+Flow (per job, after you tap **Start Work**):
+
+1. **PLANNING** — Claude Code reads the brief and writes `PLAN.md` → status `awaiting_plan_approval`. You get a Telegram card with the plan and **✅ Duyệt kế hoạch / ✋ Huỷ**.
+2. **Approve** → Claude Code executes the plan autonomously in `AIFOS_DELIVERY_ROOT/<job>/`: writes real code, runs tests, fixes failures, writes `SUMMARY.md` (and `QUESTIONS.md` if blocked).
+3. A **reviewer** pass scores completion vs the brief and runs tests. If ≥90% and passing → `delivery_ready`; otherwise it self-repairs up to `AIFOS_AGENT_MAX_REPAIRS` times.
+4. Telegram pings you: *"Xong ~N%, review tại `<folder>`"* — you open the folder, no ZIP.
+
+If you want fewer interruptions, set `AIFOS_AGENT_PLAN_GATE=false`: Claude Code still writes `PLAN.md`, but then immediately executes it and only asks you to review once QA says the job is done or needs a human decision.
+
+**Safety & cost:**
+- File edits are confined to the job folder (`cwd` + `--add-dir`).
+- The **plan gate** is the main human checkpoint — you reject before the expensive execute run. `AIFOS_AGENT_MAX_TURNS`, `AIFOS_AGENT_RUN_TIMEOUT_SECONDS`, and `AIFOS_AGENT_MAX_REPAIRS` bound each job.
+- **Shell permission mode** (`AIFOS_AGENT_PERMISSION_MODE`): on **Windows** only `bypassPermissions` actually lets the agent run tests/builds headless, so that is the default — meaning the agent can run shell commands freely inside its run. Mitigate by running on your own machine, pointing `AIFOS_DELIVERY_ROOT` at a dedicated workspace folder (not a system dir), and using the plan gate. On **Linux/macOS/containers** set it to `default` to enforce a command allow/deny list (only safe prefixes like `python`/`pip`/`pytest`/`npm` run; `rm`/`sudo`/`git push`/`ssh` are denied).
+- **Each job consumes real Claude Code usage** (billed via your Claude Code login). Always review the deliverable before sending it to a client.
+
 ## Run on your own machine (no public URL needed)
 
 If you can't expose a public HTTPS webhook (laptop, home PC, shared hosting, behind NAT), run the bot in **long-polling** mode — the app pulls updates from Telegram instead of receiving them, so no tunnel, public IP, or VPS is required. Only outbound internet is needed.

@@ -15,7 +15,13 @@ from fastapi import BackgroundTasks
 from app.core.config import Settings
 from app.db import session_scope
 from app.models import Job, JobStatus
-from app.services.pipeline import process_approved_job, process_rejected_job, process_started_work
+from app.services.pipeline import (
+    execute_approved_plan,
+    process_approved_job,
+    process_rejected_job,
+    process_started_work,
+    start_planning,
+)
 from app.services.tasks import enqueue
 from app.services.telegram import TelegramService
 from app.state_machine import transition_job
@@ -35,6 +41,8 @@ def parse_callback_data(data: str) -> tuple[str | None, str | None]:
         ("approve_", "approve"),
         ("dismiss_", "reject"),
         ("reject_", "reject"),
+        ("plan_ok_", "plan_ok"),
+        ("plan_no_", "plan_no"),
         ("start_", "start"),
         ("github_pr_", "github_pr"),
         ("approve:", "approve"),
@@ -63,10 +71,12 @@ async def dispatch_callback(
     if not action or not job_id:
         return {"ok": True, "ignored": True}
 
-    # Decide the outcome inside a short transaction; defer enqueue/network to after.
+    claude_engine = settings.worker_engine.lower() == "claude_code"
+
     intent: str
     response: dict[str, Any]
     ack: str | None = None
+    clear_keyboard = False
 
     with session_scope() as db:
         job = db.get(Job, job_id)
@@ -83,15 +93,32 @@ async def dispatch_callback(
             job.last_error = None
             intent, response = "rejected", {"ok": True, "status": JobStatus.REJECTED.value}
         elif action == "start" and current in _START_WORK_STATES:
+            if claude_engine:
+                transition_job(job, JobStatus.PLANNING)
+                job.last_error = None
+                intent, response = "planning", {"ok": True, "status": JobStatus.PLANNING.value}
+            else:
+                transition_job(job, JobStatus.IN_PROGRESS)
+                job.last_error = None
+                intent, response = "start", {"ok": True, "status": JobStatus.IN_PROGRESS.value}
+            clear_keyboard = True
+        elif action == "plan_ok" and current == JobStatus.AWAITING_PLAN_APPROVAL:
             transition_job(job, JobStatus.IN_PROGRESS)
             job.last_error = None
-            intent, response = "start", {"ok": True, "status": JobStatus.IN_PROGRESS.value}
+            intent, response = "execute", {"ok": True, "status": JobStatus.IN_PROGRESS.value}
+            clear_keyboard = True
+        elif action == "plan_no" and current == JobStatus.AWAITING_PLAN_APPROVAL:
+            transition_job(job, JobStatus.PROPOSAL_READY)
+            job.last_error = None
+            intent, ack = "ack", "Đã huỷ kế hoạch."
+            response = {"ok": True, "status": JobStatus.PROPOSAL_READY.value, "detail": "plan_rejected"}
+            clear_keyboard = True
         elif action in {"approve", "reject"}:
             intent, ack = "ack", "Already processed."
             response = {"ok": True, "status": current.value, "detail": "already_processed"}
-        elif action == "start":
-            intent, ack = "ack", "Work is already running or not ready."
-            response = {"ok": True, "status": current.value, "detail": "work_not_started"}
+        elif action in {"start", "plan_ok", "plan_no"}:
+            intent, ack = "ack", "Not in the right state for this action."
+            response = {"ok": True, "status": current.value, "detail": "not_actionable"}
         elif action == "github_pr":
             intent, ack = "ack", "GitHub PR delivery is not implemented yet."
             response = {"ok": True, "status": current.value, "detail": "github_pr_not_implemented"}
@@ -99,6 +126,8 @@ async def dispatch_callback(
             return {"ok": True, "ignored": True}
 
     telegram = TelegramService(settings)
+    if clear_keyboard:
+        await telegram.clear_inline_keyboard(callback_chat_id, callback_message_id)
 
     if intent == "approved":
         await enqueue(process_approved_job, job_id, callback_id, callback_chat_id, callback_message_id, background_tasks=background_tasks)
@@ -108,6 +137,14 @@ async def dispatch_callback(
         if callback_id:
             await telegram.answer_callback_query(callback_id, "Starting sandbox work...")
         await enqueue(process_started_work, job_id, None, None, None, callback_chat_id, background_tasks=background_tasks)
+    elif intent == "planning":
+        if callback_id:
+            await telegram.answer_callback_query(callback_id, "Đang lập kế hoạch...")
+        await enqueue(start_planning, job_id, None, callback_chat_id, background_tasks=background_tasks)
+    elif intent == "execute":
+        if callback_id:
+            await telegram.answer_callback_query(callback_id, "Bắt đầu làm việc...")
+        await enqueue(execute_approved_plan, job_id, callback_chat_id, background_tasks=background_tasks)
     elif intent == "ack" and callback_id and ack:
         await telegram.answer_callback_query(callback_id, ack)
 

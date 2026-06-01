@@ -1,10 +1,13 @@
 import json
 import logging
 from datetime import UTC, datetime
+from pathlib import Path
 
 from app.core.config import get_settings
 from app.db import session_scope
 from app.models import Job, JobStatus, ProjectTask, QAStatus, TaskScope
+from app.services.agent import worker_agent
+from app.services.agent.job_folder import create_job_folder, read_text_if_exists, write_brief
 from app.services.analyst import AnalystService
 from app.services.delivery import DeliveryService
 from app.services.portfolio import PortfolioService
@@ -282,3 +285,166 @@ def _default_task_title(job: Job, task_scope: TaskScope) -> str:
         TaskScope.SCRAPING: "Scraping delivery",
     }[task_scope]
     return f"{prefix}: {job.title[:120]}"
+
+
+# --- Agentic (Claude Code) worker engine ---------------------------------------
+
+
+async def start_planning(job_id: str, instructions: str | None = None, callback_chat_id: str | int | None = None) -> None:
+    """Phase 1 of the agentic engine: seed the job folder and let Claude Code draft PLAN.md."""
+    settings = get_settings()
+    telegram_service = TelegramService(settings)
+
+    with session_scope() as db:
+        job = db.get(Job, job_id)
+        if job is None:
+            logger.warning("Job %s not found for planning", job_id)
+            return
+        folder = create_job_folder(job, settings)
+        write_brief(job, folder, instructions)
+        job.workspace_path = str(folder)
+        job.delivery_path = None
+
+    run = await worker_agent.plan(job, folder, settings)
+    plan_path = folder / "PLAN.md"
+
+    if not run.ok or not plan_path.exists():
+        failed_job = None
+        with session_scope() as db:
+            job = db.get(Job, job_id)
+            if job:
+                job.last_error = run.error or "Planner did not produce PLAN.md"
+                if job.status == JobStatus.PLANNING:
+                    transition_job(job, JobStatus.WORK_FAILED)
+                failed_job = job
+        if failed_job:
+            await telegram_service.send_work_failed(failed_job, failed_job.last_error or "planning failed", callback_chat_id)
+        logger.warning("Planning failed for job %s: %s", job_id, run.error)
+        return
+
+    plan_text = read_text_if_exists(plan_path, limit=3000)
+    if settings.agent_plan_gate:
+        ready_job = None
+        with session_scope() as db:
+            job = db.get(Job, job_id)
+            if job and job.status == JobStatus.PLANNING:
+                transition_job(job, JobStatus.AWAITING_PLAN_APPROVAL)
+                job.last_error = None
+                ready_job = job
+        if ready_job:
+            await telegram_service.send_plan_ready(ready_job, plan_text, callback_chat_id)
+        return
+
+    execute_now = False
+    with session_scope() as db:
+        job = db.get(Job, job_id)
+        if job and job.status == JobStatus.PLANNING:
+            transition_job(job, JobStatus.IN_PROGRESS)
+            job.last_error = None
+            execute_now = True
+    if execute_now:
+        logger.info("Plan gate disabled; executing approved plan immediately for job %s", job_id)
+        await execute_approved_plan(job_id, callback_chat_id)
+
+
+async def execute_approved_plan(job_id: str, callback_chat_id: str | int | None = None) -> None:
+    """Phase 2 of the agentic engine: execute the approved plan, then QA-review it."""
+    settings = get_settings()
+    telegram_service = TelegramService(settings)
+
+    with session_scope() as db:
+        job = db.get(Job, job_id)
+        if job is None:
+            return
+        folder = Path(job.workspace_path) if job.workspace_path else None
+
+    if folder is None or not folder.exists():
+        failed_job = None
+        with session_scope() as db:
+            job = db.get(Job, job_id)
+            if job:
+                job.last_error = "Job folder is missing; re-run Start Work."
+                if job.status == JobStatus.IN_PROGRESS:
+                    transition_job(job, JobStatus.WORK_FAILED)
+                failed_job = job
+        if failed_job:
+            await telegram_service.send_work_failed(failed_job, failed_job.last_error or "missing folder", callback_chat_id)
+        return
+
+    await telegram_service.send_work_started(job, _infer_task_scope(job), callback_chat_id)
+
+    previous_review: worker_agent.ReviewResult | None = None
+    max_attempts = max(0, settings.agent_max_repairs) + 1
+
+    for attempt in range(1, max_attempts + 1):
+        with session_scope() as db:
+            job = db.get(Job, job_id)
+            if job is None:
+                return
+
+        run = await worker_agent.execute(job, folder, settings, previous_review)
+        if not run.ok:
+            failed_job = None
+            with session_scope() as db:
+                job = db.get(Job, job_id)
+                if job:
+                    job.last_error = run.error or "Executor run failed"
+                    if job.status == JobStatus.IN_PROGRESS:
+                        transition_job(job, JobStatus.WORK_FAILED)
+                    failed_job = job
+            if failed_job:
+                await telegram_service.send_work_failed(failed_job, failed_job.last_error or "executor failed", callback_chat_id)
+            return
+
+        with session_scope() as db:
+            job = db.get(Job, job_id)
+            if job and job.status == JobStatus.IN_PROGRESS:
+                transition_job(job, JobStatus.QA_RUNNING)
+
+        review_result = await worker_agent.review(job, folder, settings)
+        _write_review_report(folder, review_result, attempt)
+
+        if review_result.passed:
+            ready_job = None
+            with session_scope() as db:
+                job = db.get(Job, job_id)
+                if job:
+                    job.delivery_path = str(folder)
+                    job.last_error = None
+                    if job.status == JobStatus.QA_RUNNING:
+                        transition_job(job, JobStatus.DELIVERY_READY)
+                    ready_job = job
+            if ready_job:
+                await telegram_service.send_review_ready(ready_job, review_result, callback_chat_id)
+            return
+
+        previous_review = review_result
+        should_retry = attempt < max_attempts
+        final_job = None
+        with session_scope() as db:
+            job = db.get(Job, job_id)
+            if job:
+                job.last_error = f"{review_result.completion_percent}% complete: {review_result.summary}"
+                if job.status == JobStatus.QA_RUNNING:
+                    transition_job(job, JobStatus.IN_PROGRESS if should_retry else JobStatus.QA_FAILED)
+                if not should_retry:
+                    final_job = job
+        if final_job:
+            await telegram_service.send_review_ready(final_job, review_result, callback_chat_id)
+            return
+
+
+def _write_review_report(folder: Path, review_result: "worker_agent.ReviewResult", attempt: int) -> None:
+    qa_dir = folder / "qa"
+    qa_dir.mkdir(parents=True, exist_ok=True)
+    report = {
+        "attempt": attempt,
+        "completion_percent": review_result.completion_percent,
+        "passed": review_result.passed,
+        "summary": review_result.summary,
+        "blockers": review_result.blockers,
+        "checklist": review_result.checklist,
+    }
+    report_text = json.dumps(report, indent=2, ensure_ascii=False)
+    (qa_dir / f"review_attempt_{attempt}.json").write_text(report_text, encoding="utf-8")
+    (qa_dir / "review.json").write_text(report_text, encoding="utf-8")

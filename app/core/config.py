@@ -80,9 +80,35 @@ class Settings(BaseSettings):
     # Expose Prometheus metrics at /metrics when true.
     metrics_enabled: bool = False
 
+    # Worker execution engine: "scaffold" (one-shot LLM files) or "claude_code"
+    # (autonomous Claude Code agent that plans, codes, and tests in a real folder).
+    worker_engine: str = "scaffold"
+    # Where the claude_code engine does real work. Each job gets a subfolder here;
+    # you open it to review. Point this at a folder you control.
+    delivery_root: str = "storage/deliveries"
+    # Claude Code CLI used by the agent engine (reuses your existing CLI login).
+    claude_bin: str = "claude"
+    # Require human approval of the agent's PLAN.md before it executes.
+    agent_plan_gate: bool = True
+    agent_max_turns: int = 60
+    agent_max_repairs: int = 1
+    agent_run_timeout_seconds: int = 1800
+    # Claude Code permission mode for the worker. "bypassPermissions" lets the
+    # agent run shell commands without prompts (the only mode that works headless
+    # on Windows); "default"/"acceptEdits" enforce the allow/deny command lists
+    # (works on Linux/macOS/containers but blocks many commands on Windows).
+    agent_permission_mode: str = "bypassPermissions"
+
     @property
     def project_root(self) -> Path:
         return Path(__file__).resolve().parents[2]
+
+    @property
+    def resolved_delivery_root(self) -> Path:
+        root = Path(self.delivery_root)
+        if not root.is_absolute():
+            root = self.project_root / root
+        return root.resolve()
 
     @property
     def resolved_portfolio_path(self) -> Path:

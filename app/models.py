@@ -16,6 +16,8 @@ class JobStatus(str, enum.Enum):
     AWAITING_HUMAN_REVIEW = "awaiting_human_review"
     GENERATING_PROPOSAL = "generating_proposal"
     PROPOSAL_READY = "proposal_ready"
+    PLANNING = "planning"
+    AWAITING_PLAN_APPROVAL = "awaiting_plan_approval"
     IN_PROGRESS = "in_progress"
     QA_RUNNING = "qa_running"
     DELIVERY_READY = "delivery_ready"

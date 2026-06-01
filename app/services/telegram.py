@@ -164,6 +164,66 @@ class TelegramService:
         }
         await self._post("sendMessage", payload)
 
+    async def send_plan_ready(self, job: Job, plan_text: str, chat_id: str | int | None = None) -> None:
+        target_chat_id = self._resolve_chat_id(job, chat_id)
+        if not self.settings.telegram_bot_token or not target_chat_id:
+            logger.info("Telegram is not configured; skipping plan-ready notice for job %s", job.id)
+            return
+
+        excerpt = plan_text.strip()
+        if len(excerpt) > 2800:
+            excerpt = excerpt[:2800] + "\n..."
+        text = (
+            f"\U0001F4DD <b>PLAN READY</b> — Job #{escape(job.id[:8])}\n\n"
+            f"<b>{escape(job.title)}</b>\n\n"
+            f"<pre>{escape(excerpt)}</pre>\n"
+            "Duyệt để agent bắt đầu làm thật trong folder."
+        )
+        payload = {
+            "chat_id": target_chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+            "reply_markup": {
+                "inline_keyboard": [
+                    [
+                        {"text": "✅ Duyệt kế hoạch", "callback_data": f"plan_ok_{job.id}"},
+                        {"text": "✋ Huỷ", "callback_data": f"plan_no_{job.id}"},
+                    ]
+                ]
+            },
+        }
+        await self._post("sendMessage", payload)
+
+    async def send_review_ready(self, job: Job, review: Any, chat_id: str | int | None = None) -> None:
+        target_chat_id = self._resolve_chat_id(job, chat_id)
+        if not self.settings.telegram_bot_token or not target_chat_id:
+            logger.info("Telegram is not configured; skipping review-ready notice for job %s", job.id)
+            return
+
+        done = bool(getattr(review, "passed", False))
+        percent = getattr(review, "completion_percent", 0)
+        summary = escape(str(getattr(review, "summary", "")))[:600]
+        blockers = getattr(review, "blockers", []) or []
+        head = "✅ <b>JOB XONG — CẦN REVIEW</b>" if done else "⚠️ <b>JOB CẦN BẠN XỬ LÝ</b>"
+        block_text = ""
+        if blockers:
+            items = "\n".join(f"• {escape(str(b))}" for b in blockers[:6])
+            block_text = f"\n\n<b>Cần bạn / còn thiếu:</b>\n{items}"
+        text = (
+            f"{head}  ({percent}% complete)\n\n"
+            f"<b>{escape(job.title)}</b>\n"
+            f"<b>Folder:</b> <code>{escape(job.delivery_path or job.workspace_path or 'n/a')}</code>\n\n"
+            f"<b>Verdict:</b> {summary}{block_text}"
+        )
+        payload = {
+            "chat_id": target_chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        }
+        await self._post("sendMessage", payload)
+
     async def answer_callback_query(self, callback_query_id: str, text: str) -> None:
         if not self.settings.telegram_bot_token:
             return

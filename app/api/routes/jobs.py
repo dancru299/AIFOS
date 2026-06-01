@@ -2,10 +2,11 @@ from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, st
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.db import get_db
 from app.models import Job, JobStatus
 from app.schemas import JobIngestRequest, JobIngestResponse, JobRead, JobStartWorkRequest, JobStartWorkResponse
-from app.services.pipeline import analyze_job, process_started_work
+from app.services.pipeline import analyze_job, process_started_work, start_planning
 from app.services.tasks import enqueue
 from app.state_machine import transition_job
 
@@ -68,18 +69,24 @@ async def start_work(
         )
 
     payload = payload or JobStartWorkRequest()
-    transition_job(job, JobStatus.IN_PROGRESS)
     job.last_error = None
-    db.commit()
-    db.refresh(job)
 
-    await enqueue(
-        process_started_work,
-        job.id,
-        payload.task_scope,
-        payload.task_title,
-        payload.instructions,
-        None,
-        background_tasks=background_tasks,
-    )
+    if get_settings().worker_engine.lower() == "claude_code":
+        transition_job(job, JobStatus.PLANNING)
+        db.commit()
+        db.refresh(job)
+        await enqueue(start_planning, job.id, payload.instructions, None, background_tasks=background_tasks)
+    else:
+        transition_job(job, JobStatus.IN_PROGRESS)
+        db.commit()
+        db.refresh(job)
+        await enqueue(
+            process_started_work,
+            job.id,
+            payload.task_scope,
+            payload.task_title,
+            payload.instructions,
+            None,
+            background_tasks=background_tasks,
+        )
     return JobStartWorkResponse(job_id=job.id, status=job.status, workspace_path=job.workspace_path)
