@@ -180,9 +180,27 @@ curl -X POST http://127.0.0.1:8000/api/v1/jobs/ingest ^
 - **Job sources:** to stay within platform ToS, the Scout Agent does not scrape Upwork directly. It reads Gmail job-alert emails over IMAP ("Inbox Hunter") plus open RSS feeds (WeWorkRemotely, RemoteOK) and Reddit.
 - **Pipeline depth:** the PRD lists PM / Worker / QA / Delivery as "Future Horizon" (Phase 3-5). These are **already implemented** — the `jobs.status` flow goes through `in_progress -> qa_running -> delivery_ready`, generating files in a sandboxed workspace, running QA checks, and packaging a ZIP for delivery.
 
+## Run on your own machine (no public URL needed)
+
+If you can't expose a public HTTPS webhook (laptop, home PC, shared hosting, behind NAT), run the bot in **long-polling** mode — the app pulls updates from Telegram instead of receiving them, so no tunnel, public IP, or VPS is required. Only outbound internet is needed.
+
+```bash
+# .env
+AIFOS_TELEGRAM_MODE=polling
+```
+
+Then start the API and the scout (two terminals):
+
+```bash
+uvicorn app.main:app --host 127.0.0.1 --port 8001   # serves /ingest, runs the poller in-process
+python scripts/run_scouts.py                         # finds jobs, posts them to /ingest
+```
+
+The poller runs inside the API process and shares its database and pipeline; setting `AIFOS_TELEGRAM_MODE=polling` deletes any existing webhook automatically. Approve / Dismiss / Start Work all work over polling. Keep the machine on while you want to receive jobs. (You can also run the poller standalone with `python scripts/run_telegram_poller.py`.)
+
 ## Production setup
 
-The default `background` task backend (FastAPI `BackgroundTasks`) needs no extra infra and is great for local use, but in-flight work is lost if the process restarts. For production, run the durable stack:
+The default `background` task backend (FastAPI `BackgroundTasks`) needs no extra infra and is great for local use, but in-flight work is lost if the process restarts. For an always-on, durable deployment (webhook mode), run the stack:
 
 ```bash
 cp .env.example .env   # fill in provider keys, Telegram, AIFOS_ADMIN_PASSWORD

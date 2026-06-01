@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     telegram_default_chat_id: str | None = None
     telegram_webhook_secret: str | None = None
     telegram_api_base: str = "https://api.telegram.org"
+    # How the bot receives button taps: "webhook" (needs a public HTTPS URL) or
+    # "polling" (the app pulls updates itself; works behind NAT / on a laptop).
+    telegram_mode: str = "webhook"
 
     gemini_api_key: str | None = Field(default=None, validation_alias=AliasChoices("AIFOS_GEMINI_API_KEY", "GEMINI_API_KEY"))
     gemini_model: str = Field(default="gemini-2.5-flash", validation_alias=AliasChoices("AIFOS_GEMINI_MODEL", "GEMINI_MODEL"))
