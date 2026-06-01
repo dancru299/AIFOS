@@ -1,6 +1,6 @@
-import logging
 import json
-from datetime import datetime, timezone
+import logging
+from datetime import UTC, datetime
 
 from app.core.config import get_settings
 from app.db import session_scope
@@ -14,7 +14,6 @@ from app.services.telegram import TelegramService
 from app.services.workers import WorkerContext, get_worker_for_scope
 from app.services.workspace import WorkspaceService
 from app.state_machine import transition_job
-
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +119,7 @@ async def process_approved_job(job_id: str, callback_query_id: str | None, callb
             job.proposal_text = proposal.proposal_text
             job.proposal_price = proposal.estimated_bid
             job.proposal_timeline = proposal.timeline
-            job.proposal_generated_at = datetime.now(timezone.utc)
+            job.proposal_generated_at = datetime.now(UTC)
             job.last_error = None
             transition_job(job, JobStatus.PROPOSAL_READY)
             ready_job = job
