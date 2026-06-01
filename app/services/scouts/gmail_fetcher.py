@@ -1,14 +1,14 @@
 import asyncio
 import imaplib
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from email import message_from_bytes, policy
 from email.header import decode_header, make_header
 from email.message import Message
 from email.utils import parsedate_to_datetime
 from html import unescape
-from typing import Iterable
 from urllib.parse import parse_qs, parse_qsl, quote, unquote, urlencode, urlparse, urlunparse
 
 from bs4 import BeautifulSoup
@@ -62,7 +62,7 @@ class GmailInboxScout:
             if status != "OK":
                 raise RuntimeError(f"Unable to select Gmail mailbox: {self.mailbox}")
 
-            since_date = (datetime.now(timezone.utc) - timedelta(days=self.search_window_days)).strftime("%d-%b-%Y")
+            since_date = (datetime.now(UTC) - timedelta(days=self.search_window_days)).strftime("%d-%b-%Y")
             message_ids = _search_message_ids(mail, since_date, self.subject_filters)
             if not message_ids:
                 return []
@@ -157,7 +157,7 @@ def _first_message_payload(message_data) -> bytes | None:
     return None
 
 
-def _search_message_ids(mail: imaplib.IMAP4_SSL, since_date: str, subject_filters: list[str]) -> list[bytes]:
+def _search_message_ids(mail: imaplib.IMAP4_SSL, since_date: str, subject_filters: list[str]) -> list[str]:
     message_ids: set[bytes] = set()
     search_failed = False
 
@@ -170,12 +170,16 @@ def _search_message_ids(mail: imaplib.IMAP4_SSL, since_date: str, subject_filter
             message_ids.update(data[0].split())
 
     if message_ids or not search_failed:
-        return sorted(message_ids, key=lambda value: int(value))
+        return _sorted_decoded(message_ids)
 
     status, data = mail.search(None, "SINCE", since_date)
     if status != "OK" or not data:
         return []
-    return sorted(set(data[0].split()), key=lambda value: int(value))
+    return _sorted_decoded(set(data[0].split()))
+
+
+def _sorted_decoded(message_ids: set[bytes]) -> list[str]:
+    return [value.decode() for value in sorted(message_ids, key=lambda value: int(value))]
 
 
 def _decode_header_value(value: str) -> str:
@@ -205,17 +209,26 @@ def _extract_message_bodies(message: Message) -> tuple[str, str]:
 
 def _append_body_part(part: Message, html_parts: list[str], text_parts: list[str]) -> None:
     content_type = part.get_content_type()
-    try:
-        payload = part.get_content()
-    except Exception:
-        raw_payload = part.get_payload(decode=True) or b""
-        charset = part.get_content_charset() or "utf-8"
-        payload = raw_payload.decode(charset, errors="replace")
+    payload = _decode_part_payload(part)
 
     if content_type == "text/html":
-        html_parts.append(str(payload))
+        html_parts.append(payload)
     elif content_type == "text/plain":
-        text_parts.append(str(payload))
+        text_parts.append(payload)
+
+
+def _decode_part_payload(part: Message) -> str:
+    get_content = getattr(part, "get_content", None)
+    if callable(get_content):
+        try:
+            return str(get_content())
+        except Exception:
+            pass
+    raw_payload = part.get_payload(decode=True)
+    if isinstance(raw_payload, bytes):
+        charset = part.get_content_charset() or "utf-8"
+        return raw_payload.decode(charset, errors="replace")
+    return str(raw_payload or "")
 
 
 def _extract_job_links(html_body: str, text_body: str) -> list[EmailJobLink]:

@@ -1,10 +1,9 @@
 import json
 import re
 
-import httpx
-
 from app.core.config import Settings
 from app.services.gemini import GeminiService
+from app.services.http import request_with_retry
 
 
 class LLMTextService:
@@ -54,10 +53,13 @@ class LLMTextService:
             "Authorization": f"Bearer {self.settings.openai_api_key}",
             "Content-Type": "application/json",
         }
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
-            response.raise_for_status()
-            data = response.json()
+        response = await request_with_retry(
+            "POST",
+            "https://api.openai.com/v1/chat/completions",
+            headers=headers,
+            json=payload,
+        )
+        data = response.json()
         return data["choices"][0]["message"]["content"]
 
     async def _generate_with_anthropic(self, system_prompt: str, user_prompt: str) -> str:
@@ -74,10 +76,13 @@ class LLMTextService:
             "anthropic-version": "2023-06-01",
             "content-type": "application/json",
         }
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post("https://api.anthropic.com/v1/messages", headers=headers, json=payload)
-            response.raise_for_status()
-            data = response.json()
+        response = await request_with_retry(
+            "POST",
+            "https://api.anthropic.com/v1/messages",
+            headers=headers,
+            json=payload,
+        )
+        data = response.json()
         text_blocks = [block["text"] for block in data.get("content", []) if block.get("type") == "text"]
         return "\n".join(text_blocks).strip()
 

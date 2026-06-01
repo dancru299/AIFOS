@@ -1,6 +1,5 @@
 from app.models import Job, JobStatus
 
-
 ALLOWED_TRANSITIONS: dict[JobStatus, set[JobStatus]] = {
     JobStatus.PENDING: {JobStatus.ANALYZING},
     JobStatus.ANALYZING: {JobStatus.DISCARDED, JobStatus.AWAITING_HUMAN_REVIEW, JobStatus.ANALYSIS_FAILED},

@@ -1,6 +1,6 @@
+import re
 from dataclasses import dataclass
 from pathlib import Path
-import re
 
 from app.core.config import Settings
 from app.models import Job, TaskScope

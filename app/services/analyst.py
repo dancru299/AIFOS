@@ -1,13 +1,10 @@
-import json
 import re
 from dataclasses import dataclass
-
-import httpx
 
 from app.core.config import Settings
 from app.models import Job
 from app.prompts import build_analyst_prompt
-from app.services.gemini import GeminiService
+from app.services.llm import LLMTextService, load_json_object
 
 ANALYST_SYSTEM_PROMPT = """
 You are the Analyst Agent for AI Freelancer OS.
@@ -86,63 +83,31 @@ class AnalystService:
     async def analyze_job(self, job: Job) -> AnalystDecision:
         provider = self.settings.analyst_provider.lower()
 
-        if provider == "gemini":
-            return await self._analyze_with_gemini(job)
-        if provider == "openai":
-            return await self._analyze_with_openai(job)
         if provider == "mock":
             return self._analyze_with_heuristics(job)
+        if provider == "auto" and not self._has_llm_key():
+            if self.settings.allow_mock_llm:
+                return self._analyze_with_heuristics(job)
+            raise RuntimeError("No analyst LLM API key is configured and mock mode is disabled.")
 
-        if self.settings.gemini_api_key:
-            return await self._analyze_with_gemini(job)
-        if self.settings.openai_api_key:
-            return await self._analyze_with_openai(job)
-        if self.settings.allow_mock_llm:
-            return self._analyze_with_heuristics(job)
-        raise RuntimeError("No analyst LLM API key is configured and mock mode is disabled.")
+        return await self._analyze_with_llm(job, provider)
 
-    async def _analyze_with_gemini(self, job: Job) -> AnalystDecision:
-        if not self.settings.gemini_api_key:
-            raise RuntimeError("Gemini API key is not configured.")
+    def _has_llm_key(self) -> bool:
+        return bool(
+            self.settings.gemini_api_key
+            or self.settings.openai_api_key
+            or self.settings.anthropic_api_key
+        )
+
+    async def _analyze_with_llm(self, job: Job, provider: str) -> AnalystDecision:
+        llm_provider = provider if provider in {"gemini", "openai", "anthropic"} else "auto"
         prompt = build_analyst_prompt(job)
-        content = await GeminiService(self.settings).generate_text(
+        content = await LLMTextService(self.settings, llm_provider).generate_text(
+            ANALYST_SYSTEM_PROMPT,
             prompt,
-            system_instruction=ANALYST_SYSTEM_PROMPT,
             temperature=0.2,
         )
-        parsed = _load_json_object(content)
-        return _decision_from_payload(parsed)
-
-    async def _analyze_with_openai(self, job: Job) -> AnalystDecision:
-        if not self.settings.openai_api_key:
-            raise RuntimeError("OpenAI API key is not configured.")
-        prompt = build_analyst_prompt(job)
-        payload = {
-            "model": self.settings.openai_model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": ANALYST_SYSTEM_PROMPT,
-                },
-                {
-                    "role": "user",
-                    "content": prompt,
-                },
-            ],
-            "temperature": 0.2,
-        }
-        headers = {
-            "Authorization": f"Bearer {self.settings.openai_api_key}",
-            "Content-Type": "application/json",
-        }
-
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
-            response.raise_for_status()
-            data = response.json()
-
-        content = data["choices"][0]["message"]["content"]
-        parsed = _load_json_object(content)
+        parsed = load_json_object(content)
         return _decision_from_payload(parsed)
 
     def _analyze_with_heuristics(self, job: Job) -> AnalystDecision:
@@ -185,16 +150,6 @@ class AnalystService:
             tech_stack=tech_stack,
             client_country=client_country,
         )
-
-
-def _load_json_object(content: str) -> dict:
-    try:
-        return json.loads(content)
-    except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", content, re.DOTALL)
-        if not match:
-            raise
-        return json.loads(match.group(0))
 
 
 def _decision_from_payload(payload: dict) -> AnalystDecision:

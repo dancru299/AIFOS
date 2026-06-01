@@ -4,7 +4,6 @@ from pathlib import Path
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
 DEFAULT_RSS_FEED_URLS = ",".join(
     (
         "https://weworkremotely.com/categories/remote-programming-jobs.rss",
@@ -54,7 +53,7 @@ class Settings(BaseSettings):
     telegram_api_base: str = "https://api.telegram.org"
 
     gemini_api_key: str | None = Field(default=None, validation_alias=AliasChoices("AIFOS_GEMINI_API_KEY", "GEMINI_API_KEY"))
-    gemini_model: str = Field(default="gemini-3.5-flash", validation_alias=AliasChoices("AIFOS_GEMINI_MODEL", "GEMINI_MODEL"))
+    gemini_model: str = Field(default="gemini-2.5-flash", validation_alias=AliasChoices("AIFOS_GEMINI_MODEL", "GEMINI_MODEL"))
 
     openai_api_key: str | None = None
     openai_model: str = "gpt-4o-mini"
@@ -63,6 +62,20 @@ class Settings(BaseSettings):
     anthropic_model: str = "claude-3-5-sonnet-20241022"
 
     allow_mock_llm: bool = True
+
+    # Background task dispatch: "background" (FastAPI BackgroundTasks, zero-infra) or "arq" (Redis-backed).
+    task_backend: str = "background"
+    redis_url: str = "redis://localhost:6379/0"
+
+    # Admin UI auth. When admin_password is unset, /admin is restricted to localhost.
+    admin_username: str = "admin"
+    admin_password: str | None = None
+
+    # Structured JSON logging for production; plain logging when false.
+    json_logs: bool = False
+
+    # Expose Prometheus metrics at /metrics when true.
+    metrics_enabled: bool = False
 
     @property
     def project_root(self) -> Path:

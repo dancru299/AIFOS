@@ -1,13 +1,10 @@
-import json
 import re
 from dataclasses import dataclass
-
-import httpx
 
 from app.core.config import Settings
 from app.models import Job
 from app.prompts import PROPOSAL_SYSTEM_PROMPT, build_proposal_prompt
-from app.services.gemini import GeminiService
+from app.services.llm import LLMTextService, load_json_object
 
 
 @dataclass
@@ -28,99 +25,31 @@ class ProposalService:
     async def generate_proposal(self, job: Job, portfolio_markdown: str) -> ProposalDraft:
         provider = self.settings.proposal_provider.lower()
 
-        if provider == "gemini":
-            return await self._generate_with_gemini(job, portfolio_markdown)
-        if provider == "anthropic":
-            return await self._generate_with_anthropic(job, portfolio_markdown)
-        if provider == "openai":
-            return await self._generate_with_openai(job, portfolio_markdown)
         if provider == "mock":
             return self._generate_locally(job, portfolio_markdown)
+        if provider == "auto" and not self._has_llm_key():
+            if self.settings.allow_mock_llm:
+                return self._generate_locally(job, portfolio_markdown)
+            raise RuntimeError("No proposal LLM API key is configured and mock mode is disabled.")
 
-        if self.settings.gemini_api_key:
-            return await self._generate_with_gemini(job, portfolio_markdown)
-        if self.settings.anthropic_api_key:
-            return await self._generate_with_anthropic(job, portfolio_markdown)
-        if self.settings.openai_api_key:
-            return await self._generate_with_openai(job, portfolio_markdown)
-        if self.settings.allow_mock_llm:
-            return self._generate_locally(job, portfolio_markdown)
-        raise RuntimeError("No proposal LLM API key is configured and mock mode is disabled.")
+        return await self._generate_with_llm(job, portfolio_markdown, provider)
 
-    async def _generate_with_gemini(self, job: Job, portfolio_markdown: str) -> ProposalDraft:
-        if not self.settings.gemini_api_key:
-            raise RuntimeError("Gemini API key is not configured.")
+    def _has_llm_key(self) -> bool:
+        return bool(
+            self.settings.gemini_api_key
+            or self.settings.anthropic_api_key
+            or self.settings.openai_api_key
+        )
+
+    async def _generate_with_llm(self, job: Job, portfolio_markdown: str, provider: str) -> ProposalDraft:
+        llm_provider = provider if provider in {"gemini", "anthropic", "openai"} else "auto"
         prompt = build_proposal_prompt(job, portfolio_markdown, self.settings.proposal_max_words)
-        content = await GeminiService(self.settings).generate_text(
+        content = await LLMTextService(self.settings, llm_provider).generate_text(
+            PROPOSAL_SYSTEM_PROMPT,
             prompt,
-            system_instruction=PROPOSAL_SYSTEM_PROMPT,
             temperature=0.4,
         )
-        parsed = _load_json_object(content)
-        return _draft_from_payload(parsed)
-
-    async def _generate_with_openai(self, job: Job, portfolio_markdown: str) -> ProposalDraft:
-        if not self.settings.openai_api_key:
-            raise RuntimeError("OpenAI API key is not configured.")
-
-        prompt = build_proposal_prompt(job, portfolio_markdown, self.settings.proposal_max_words)
-        payload = {
-            "model": self.settings.openai_model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": PROPOSAL_SYSTEM_PROMPT,
-                },
-                {
-                    "role": "user",
-                    "content": prompt,
-                },
-            ],
-            "temperature": 0.4,
-        }
-        headers = {
-            "Authorization": f"Bearer {self.settings.openai_api_key}",
-            "Content-Type": "application/json",
-        }
-
-        async with httpx.AsyncClient(timeout=45.0) as client:
-            response = await client.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
-            response.raise_for_status()
-            data = response.json()
-
-        content = data["choices"][0]["message"]["content"]
-        parsed = _load_json_object(content)
-        return _draft_from_payload(parsed)
-
-    async def _generate_with_anthropic(self, job: Job, portfolio_markdown: str) -> ProposalDraft:
-        if not self.settings.anthropic_api_key:
-            raise RuntimeError("Anthropic API key is not configured.")
-        prompt = build_proposal_prompt(job, portfolio_markdown, self.settings.proposal_max_words)
-        payload = {
-            "model": self.settings.anthropic_model,
-            "max_tokens": 450,
-            "system": PROPOSAL_SYSTEM_PROMPT,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": prompt,
-                }
-            ],
-        }
-        headers = {
-            "x-api-key": self.settings.anthropic_api_key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        }
-
-        async with httpx.AsyncClient(timeout=45.0) as client:
-            response = await client.post("https://api.anthropic.com/v1/messages", headers=headers, json=payload)
-            response.raise_for_status()
-            data = response.json()
-
-        text_blocks = [block["text"] for block in data.get("content", []) if block.get("type") == "text"]
-        content = "\n".join(text_blocks).strip()
-        parsed = _load_json_object(content)
+        parsed = load_json_object(content)
         return _draft_from_payload(parsed)
 
     def _generate_locally(self, job: Job, portfolio_markdown: str) -> ProposalDraft:
@@ -205,13 +134,3 @@ def _draft_from_payload(payload: dict) -> ProposalDraft:
         estimated_bid=estimated_bid or "$300-$600 fixed",
         timeline=timeline or "3-7 days after scope confirmation",
     )
-
-
-def _load_json_object(content: str) -> dict:
-    try:
-        return json.loads(content)
-    except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", content, re.DOTALL)
-        if not match:
-            raise
-        return json.loads(match.group(0))

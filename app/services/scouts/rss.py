@@ -1,6 +1,6 @@
 import re
+from collections.abc import Iterable
 from html import unescape
-from typing import Iterable
 from urllib.parse import urlparse
 
 import feedparser

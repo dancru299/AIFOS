@@ -1,7 +1,7 @@
-from typing import Iterable
+from collections.abc import Iterable
 
-from app.services.scouts.types import ScoutJob
 from app.services.scouts.rss import RssScout, parse_rss_entry
+from app.services.scouts.types import ScoutJob
 
 
 class UpworkScout(RssScout):
