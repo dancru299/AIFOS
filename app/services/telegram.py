@@ -44,6 +44,8 @@ class TelegramService:
             },
         }
         data = await self._post("sendMessage", payload)
+        if not data:
+            return None
         result = data.get("result", {})
         return TelegramMessageRef(chat_id=str(result.get("chat", {}).get("id")), message_id=result.get("message_id"))
 
@@ -122,6 +124,7 @@ class TelegramService:
             "inline_keyboard": [
                 [
                     {"text": "\U0001F680 GitHub PR (soon)", "callback_data": f"github_pr_{job.id}"},
+                    {"text": "\U0001F501 Làm lại", "callback_data": f"start_{job.id}"},
                 ]
             ]
         }
@@ -159,6 +162,97 @@ class TelegramService:
             "text": self._render_work_failed(job, reason),
             "parse_mode": "HTML",
             "disable_web_page_preview": True,
+            "reply_markup": {
+                "inline_keyboard": [
+                    [
+                        {"text": "\U0001F501 Làm lại", "callback_data": f"start_{job.id}"},
+                    ]
+                ]
+            },
+        }
+        await self._post("sendMessage", payload)
+
+    async def send_plan_ready(self, job: Job, plan_text: str, chat_id: str | int | None = None) -> None:
+        target_chat_id = self._resolve_chat_id(job, chat_id)
+        if not self.settings.telegram_bot_token or not target_chat_id:
+            logger.info("Telegram is not configured; skipping plan-ready notice for job %s", job.id)
+            return
+
+        excerpt = plan_text.strip()
+        if len(excerpt) > 2800:
+            excerpt = excerpt[:2800] + "\n..."
+        text = (
+            f"\U0001F4DD <b>PLAN READY</b> — Job #{escape(job.id[:8])}\n\n"
+            f"<b>{escape(job.title)}</b>\n\n"
+            f"<pre>{escape(excerpt)}</pre>\n"
+            "Duyệt để agent bắt đầu làm thật trong folder."
+        )
+        payload = {
+            "chat_id": target_chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+            "reply_markup": {
+                "inline_keyboard": [
+                    [
+                        {"text": "✅ Duyệt kế hoạch", "callback_data": f"plan_ok_{job.id}"},
+                        {"text": "✋ Huỷ", "callback_data": f"plan_no_{job.id}"},
+                    ]
+                ]
+            },
+        }
+        await self._post("sendMessage", payload)
+
+    async def send_review_ready(
+        self,
+        job: Job,
+        review: Any,
+        chat_id: str | int | None = None,
+        questions: str | None = None,
+    ) -> None:
+        target_chat_id = self._resolve_chat_id(job, chat_id)
+        if not self.settings.telegram_bot_token or not target_chat_id:
+            logger.info("Telegram is not configured; skipping review-ready notice for job %s", job.id)
+            return
+
+        done = bool(getattr(review, "passed", False))
+        percent = getattr(review, "completion_percent", 0)
+        summary = escape(str(getattr(review, "summary", "")))[:600]
+        blockers = getattr(review, "blockers", []) or []
+        head = "✅ <b>JOB XONG — CẦN REVIEW</b>" if done else "⚠️ <b>JOB CẦN BẠN XỬ LÝ</b>"
+        block_text = ""
+        if blockers:
+            items = "\n".join(f"• {escape(str(b))}" for b in blockers[:6])
+            block_text = f"\n\n<b>Cần bạn / còn thiếu:</b>\n{items}"
+        # Questions the agent itself raised (QUESTIONS.md) — the things only a
+        # human can answer. Surface them so the operator isn't left digging.
+        question_text = ""
+        if questions and questions.strip():
+            q_excerpt = escape(questions.strip())
+            if len(q_excerpt) > 800:
+                q_excerpt = q_excerpt[:800] + "\n..."
+            question_text = f"\n\n<b>❓ Agent hỏi (QUESTIONS.md):</b>\n<pre>{q_excerpt}</pre>"
+        text = (
+            f"{head}  ({percent}% complete)\n\n"
+            f"<b>{escape(job.title)}</b>\n"
+            f"<b>Folder:</b> <code>{escape(job.delivery_path or job.workspace_path or 'n/a')}</code>\n\n"
+            f"<b>Verdict:</b> {summary}{block_text}{question_text}"
+        )
+        if done:
+            keyboard = [
+                [
+                    {"text": "✅ Nghiệm thu", "callback_data": f"accept_{job.id}"},
+                    {"text": "\U0001F501 Làm lại", "callback_data": f"start_{job.id}"},
+                ]
+            ]
+        else:
+            keyboard = [[{"text": "\U0001F501 Làm lại", "callback_data": f"start_{job.id}"}]]
+        payload = {
+            "chat_id": target_chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+            "reply_markup": {"inline_keyboard": keyboard},
         }
         await self._post("sendMessage", payload)
 
@@ -185,10 +279,17 @@ class TelegramService:
             return {}
 
         url = f"{self.settings.telegram_api_base}/bot{self.settings.telegram_bot_token}/{method}"
-        response = await request_with_retry("POST", url, json=payload, timeout=20.0)
-        data = response.json()
+        # Telegram is a best-effort notification side-channel: a failure here must
+        # never abort the analysis/proposal/work pipeline that produces value.
+        try:
+            response = await request_with_retry("POST", url, json=payload, timeout=20.0)
+            data = response.json()
+        except Exception:
+            logger.warning("Telegram %s request failed; continuing", method, exc_info=True)
+            return {}
         if not data.get("ok", False):
-            raise RuntimeError(f"Telegram API returned non-ok response for {method}: {data}")
+            logger.warning("Telegram %s returned non-ok response: %s", method, data)
+            return {}
         return data
 
     async def _post_file(self, method: str, payload: dict[str, Any], field_name: str, path: Path) -> dict[str, Any]:
@@ -201,14 +302,19 @@ class TelegramService:
             for key, value in payload.items()
             if value is not None
         }
-        with path.open("rb") as handle:
-            files = {field_name: (path.name, handle, "application/zip")}
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(url, data=data_payload, files=files)
-                response.raise_for_status()
-                data = response.json()
+        try:
+            with path.open("rb") as handle:
+                files = {field_name: (path.name, handle, "application/zip")}
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    response = await client.post(url, data=data_payload, files=files)
+                    response.raise_for_status()
+                    data = response.json()
+        except Exception:
+            logger.warning("Telegram %s file upload failed; continuing", method, exc_info=True)
+            return {}
         if not data.get("ok", False):
-            raise RuntimeError(f"Telegram API returned non-ok response for {method}: {data}")
+            logger.warning("Telegram %s returned non-ok response: %s", method, data)
+            return {}
         return data
 
     def _resolve_chat_id(self, job: Job, fallback_chat_id: str | int | None = None) -> str | int | None:

@@ -1,9 +1,12 @@
 import json
+import logging
 import re
 
 from app.core.config import Settings
 from app.services.gemini import GeminiService
 from app.services.http import request_with_retry
+
+logger = logging.getLogger(__name__)
 
 
 class LLMTextService:
@@ -12,7 +15,25 @@ class LLMTextService:
         self.provider = (provider or "auto").lower()
 
     async def generate_text(self, system_prompt: str, user_prompt: str, temperature: float = 0.35) -> str:
-        provider = self._resolve_provider()
+        chain = self._provider_chain()
+        last_exc: Exception | None = None
+        for index, provider in enumerate(chain):
+            try:
+                return await self._generate_with(provider, system_prompt, user_prompt, temperature)
+            except Exception as exc:
+                last_exc = exc
+                if index < len(chain) - 1:
+                    logger.warning(
+                        "LLM provider %s failed (%s); falling back to %s",
+                        provider,
+                        exc,
+                        chain[index + 1],
+                    )
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("No configured LLM provider is available.")
+
+    async def _generate_with(self, provider: str, system_prompt: str, user_prompt: str, temperature: float) -> str:
         if provider == "gemini":
             return await GeminiService(self.settings).generate_text(
                 user_prompt,
@@ -23,20 +44,27 @@ class LLMTextService:
             return await self._generate_with_openai(system_prompt, user_prompt, temperature)
         if provider == "anthropic":
             return await self._generate_with_anthropic(system_prompt, user_prompt)
-        raise RuntimeError("No configured LLM provider is available.")
+        raise RuntimeError(f"Unknown LLM provider: {provider}")
 
-    def _resolve_provider(self) -> str:
+    def _provider_chain(self) -> list[str]:
+        """Ordered providers to try. An explicit provider is used alone; ``auto``
+        falls through every configured key so a failing key can hand off to a
+        different one that is already configured."""
         if self.provider in {"gemini", "openai", "anthropic"}:
-            return self.provider
+            return [self.provider]
         if self.provider == "mock":
             raise RuntimeError("Mock provider requested.")
+
+        chain: list[str] = []
         if self.settings.gemini_api_key:
-            return "gemini"
+            chain.append("gemini")
         if self.settings.anthropic_api_key:
-            return "anthropic"
+            chain.append("anthropic")
         if self.settings.openai_api_key:
-            return "openai"
-        raise RuntimeError("No LLM API key is configured.")
+            chain.append("openai")
+        if not chain:
+            raise RuntimeError("No LLM API key is configured.")
+        return chain
 
     async def _generate_with_openai(self, system_prompt: str, user_prompt: str, temperature: float) -> str:
         if not self.settings.openai_api_key:

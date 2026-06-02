@@ -176,13 +176,59 @@ curl -X POST http://127.0.0.1:8000/api/v1/jobs/ingest ^
 
 `prd-v1.md` is the original spec and is intentionally kept as-is. A few things drifted from it during implementation — this section is the source of truth:
 
-- **LLM provider:** the PRD planned `gpt-4o-mini` (Analyst) + `Claude 3.5 Sonnet` (Proposal/Worker). The implementation is **Gemini-first** (`gemini-2.5-flash` by default), with OpenAI and Anthropic as optional fallbacks. Provider routing is `auto` by default and configurable per stage via `AIFOS_ANALYST_PROVIDER` / `AIFOS_PROPOSAL_PROVIDER` / `AIFOS_WORKER_PROVIDER`.
+- **LLM provider:** the PRD planned `gpt-4o-mini` (Analyst) + `Claude 3.5 Sonnet` (Proposal/Worker). The implementation is **Gemini-first** (`gemini-2.5-flash` by default), with OpenAI and Anthropic as optional fallbacks. Provider routing is `auto` by default and configurable per stage via `AIFOS_ANALYST_PROVIDER` / `AIFOS_PROPOSAL_PROVIDER` / `AIFOS_WORKER_PROVIDER`. In `auto` mode each outbound LLM call retries the same provider on transient errors, then **falls through to the next configured key** (Gemini → Anthropic → OpenAI), so a bad/overloaded key hands off automatically. Pinning an explicit provider disables that fallback.
 - **Job sources:** to stay within platform ToS, the Scout Agent does not scrape Upwork directly. It reads Gmail job-alert emails over IMAP ("Inbox Hunter") plus open RSS feeds (WeWorkRemotely, RemoteOK) and Reddit.
 - **Pipeline depth:** the PRD lists PM / Worker / QA / Delivery as "Future Horizon" (Phase 3-5). These are **already implemented** — the `jobs.status` flow goes through `in_progress -> qa_running -> delivery_ready`, generating files in a sandboxed workspace, running QA checks, and packaging a ZIP for delivery.
 
+## Autonomous worker (Claude Code engine)
+
+By default the worker (`AIFOS_WORKER_ENGINE=scaffold`) generates a one-shot draft and a ZIP. Set `AIFOS_WORKER_ENGINE=claude_code` to instead run **Claude Code as an autonomous agent** that plans, writes real code, runs/tests it, and iterates — handing you a finished, review-ready deliverable in a folder.
+
+```bash
+# .env
+AIFOS_WORKER_ENGINE=claude_code
+AIFOS_DELIVERY_ROOT=D:/work/aifos-jobs   # a folder you control and open to review
+AIFOS_CLAUDE_BIN=claude                  # uses the CLI's existing login; no API key
+```
+
+Flow (per job, after you tap **Start Work**):
+
+1. **PLANNING** — Claude Code reads the brief and writes `PLAN.md` → status `awaiting_plan_approval`. You get a Telegram card with the plan and **✅ Duyệt kế hoạch / ✋ Huỷ**.
+2. **Approve** → Claude Code executes the plan autonomously in `AIFOS_DELIVERY_ROOT/<job>/`: writes real code, runs tests, fixes failures, writes `SUMMARY.md` (and `QUESTIONS.md` if blocked).
+3. A **reviewer** pass scores completion vs the brief and runs tests. If ≥90% and passing → `delivery_ready`; otherwise it self-repairs up to `AIFOS_AGENT_MAX_REPAIRS` times.
+4. Telegram pings you: *"Xong ~N%, review tại `<folder>`"* — you open the folder, no ZIP.
+
+If you want fewer interruptions, set `AIFOS_AGENT_PLAN_GATE=false`: Claude Code still writes `PLAN.md`, but then immediately executes it and only asks you to review once QA says the job is done or needs a human decision.
+
+When the reviewer finishes, the Telegram card carries action buttons so you never get stuck: **✅ Nghiệm thu / 🔁 Làm lại** when it passes, **🔁 Làm lại** when it stalls (re-runs the planner/worker). Anything the agent recorded in `QUESTIONS.md` is quoted directly in that message, so the things only you can answer surface in chat instead of staying buried in the folder.
+
+**Safety & cost:**
+- File edits are confined to the job folder (`cwd` + `--add-dir`).
+- The **plan gate** is the main human checkpoint — you reject before the expensive execute run. `AIFOS_AGENT_MAX_TURNS`, `AIFOS_AGENT_RUN_TIMEOUT_SECONDS`, and `AIFOS_AGENT_MAX_REPAIRS` bound each job.
+- **Shell permission mode** (`AIFOS_AGENT_PERMISSION_MODE`): on **Windows** only `bypassPermissions` actually lets the agent run tests/builds headless, so that is the default. ⚠️ In this mode the allow/deny guardrail in `app/services/agent/guardrail.py` is **not enforced at runtime** — the agent can run *any* shell command on the host. Mitigate by pointing `AIFOS_DELIVERY_ROOT` at a dedicated workspace — ideally inside a container or VM — and keeping the plan gate on. On **Linux/macOS/containers** set it to `default` to enforce the command allow/deny list (only safe prefixes like `python`/`pip`/`pytest`/`npm` run; `rm`/`sudo`/`git push`/`ssh` are denied). To enforce the deny list **even under `bypassPermissions`**, set `AIFOS_AGENT_ENFORCE_GUARDRAIL_HOOK=true`: the runner drops a `.claude/settings.json` into each job folder wiring a **PreToolUse hook** (`guard_hook.py`) that blocks destructive Bash commands at runtime. Default off.
+- **Each job consumes real Claude Code usage** (billed via your Claude Code login, logged per run as turns + USD). Always review the deliverable before sending it to a client.
+
+## Run on your own machine (no public URL needed)
+
+If you can't expose a public HTTPS webhook (laptop, home PC, shared hosting, behind NAT), run the bot in **long-polling** mode — the app pulls updates from Telegram instead of receiving them, so no tunnel, public IP, or VPS is required. Only outbound internet is needed.
+
+```bash
+# .env
+AIFOS_TELEGRAM_MODE=polling
+```
+
+Then start the API and the scout (two terminals):
+
+```bash
+uvicorn app.main:app --host 127.0.0.1 --port 8001   # serves /ingest, runs the poller in-process
+python scripts/run_scouts.py                         # finds jobs, posts them to /ingest
+```
+
+The poller runs inside the API process and shares its database and pipeline; setting `AIFOS_TELEGRAM_MODE=polling` deletes any existing webhook automatically. Approve / Dismiss / Start Work all work over polling. Keep the machine on while you want to receive jobs. (You can also run the poller standalone with `python scripts/run_telegram_poller.py`.)
+
 ## Production setup
 
-The default `background` task backend (FastAPI `BackgroundTasks`) needs no extra infra and is great for local use, but in-flight work is lost if the process restarts. For production, run the durable stack:
+The default `background` task backend (FastAPI `BackgroundTasks`) needs no extra infra and is great for local use, but in-flight work is lost if the process restarts. For an always-on, durable deployment (webhook mode), run the stack:
 
 ```bash
 cp .env.example .env   # fill in provider keys, Telegram, AIFOS_ADMIN_PASSWORD

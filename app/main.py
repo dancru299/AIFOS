@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -17,8 +19,23 @@ from app.services.tasks import close_arq_pool
 async def lifespan(_: FastAPI):
     init_db()
     await recover_stuck_jobs()
-    yield
-    await close_arq_pool()
+
+    stop_event = asyncio.Event()
+    poller_task: asyncio.Task[None] | None = None
+    if get_settings().telegram_mode.lower() == "polling":
+        from app.services.telegram_poller import run_poller
+
+        poller_task = asyncio.create_task(run_poller(stop_event))
+
+    try:
+        yield
+    finally:
+        if poller_task is not None:
+            stop_event.set()
+            poller_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await poller_task
+        await close_arq_pool()
 
 
 def create_app() -> FastAPI:

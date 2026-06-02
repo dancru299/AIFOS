@@ -11,6 +11,7 @@ function names here match the names used by ``app.services.tasks.enqueue``
 
 from typing import Any
 
+from arq import func
 from arq.connections import RedisSettings
 
 from app.core.config import get_settings
@@ -55,13 +56,41 @@ async def process_started_work(
     await pipeline.process_started_work(job_id, task_scope, task_title, instructions, callback_chat_id)
 
 
+async def start_planning(
+    ctx: dict[str, Any],
+    job_id: str,
+    instructions: str | None = None,
+    callback_chat_id: str | int | None = None,
+) -> None:
+    await pipeline.start_planning(job_id, instructions, callback_chat_id)
+
+
+async def execute_approved_plan(
+    ctx: dict[str, Any],
+    job_id: str,
+    callback_chat_id: str | int | None = None,
+) -> None:
+    await pipeline.execute_approved_plan(job_id, callback_chat_id)
+
+
 async def startup(ctx: dict[str, Any]) -> None:
     configure_logging(get_settings().json_logs)
     init_db()
 
 
 class WorkerSettings:
-    functions = [analyze_job, process_approved_job, process_rejected_job, process_started_work]
+    # Work-generating tasks call paid LLM / Claude Code runs that take minutes and
+    # cost real money, so they must NOT be auto-replayed: max_tries=1 means a crash
+    # leaves the job in its failed state, where the operator re-triggers it with the
+    # "🔁 Làm lại" Telegram button. Cheap, idempotent steps keep the default retries.
+    functions = [
+        analyze_job,
+        process_approved_job,
+        process_rejected_job,
+        func(process_started_work, name="process_started_work", max_tries=1),
+        func(start_planning, name="start_planning", max_tries=1),
+        func(execute_approved_plan, name="execute_approved_plan", max_tries=1),
+    ]
     on_startup = startup
     max_tries = 3
     redis_settings = RedisSettings.from_dsn(get_settings().redis_url)
