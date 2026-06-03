@@ -12,7 +12,14 @@ def main() -> int:
         print("Missing AIFOS_TELEGRAM_BOT_TOKEN")
         return 1
 
-    response = httpx.get(f"https://api.telegram.org/bot{bot_token}/getUpdates", timeout=20.0)
+    # The long-polling worker (telegram_poller) sets allowed_updates=["callback_query"],
+    # and getUpdates without allowed_updates inherits that, hiding plain text messages.
+    # Explicitly request message updates so this script works regardless of prior state.
+    response = httpx.get(
+        f"https://api.telegram.org/bot{bot_token}/getUpdates",
+        params={"allowed_updates": '["message","channel_post","callback_query"]'},
+        timeout=20.0,
+    )
     response.raise_for_status()
     data = response.json()
 
