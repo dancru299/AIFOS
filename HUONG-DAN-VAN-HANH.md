@@ -105,11 +105,25 @@ Một lệnh tự động: kiểm tra `.env` (LLM, Telegram token + **chat_id**,
 
 | Biến | Lấy ở đâu | Dùng làm gì |
 |---|---|---|
-| `GEMINI_API_KEY` | Google AI Studio → API Keys | Chấm ROI + soạn proposal (rẻ, đủ cho MVP) |
+| `AIFOS_DEEPSEEK_API_KEY` | platform.deepseek.com → API Keys | **LLM chính** — chấm ROI, soạn proposal, làm sản phẩm |
 | `AIFOS_TELEGRAM_BOT_TOKEN` | Telegram `@BotFather` | Bot gửi thông báo + nhận nút bấm |
 | `AIFOS_TELEGRAM_DEFAULT_CHAT_ID` | Nhắn cho bot 1 câu, rồi chạy `python scripts/get_telegram_chat_id.py` | Chat nhận thông báo |
 
-> Không có key nào → hệ thống vẫn chạy ở **chế độ mock** (LLM giả) nếu `AIFOS_ALLOW_MOCK_LLM=true`, hữu ích để thử luồng nhưng **không tạo ra kết quả thật**.
+> Cần **ít nhất 1 LLM key**. Mặc định ưu tiên DeepSeek; có thể dùng Gemini/OpenAI/Anthropic thay thế hoặc làm dự phòng (xem 4.4).
+> Không có LLM key nào → hệ thống chạy **chế độ mock** (LLM giả) nếu `AIFOS_ALLOW_MOCK_LLM=true` — thử luồng được nhưng **không tạo kết quả thật**.
+
+#### Định tuyến LLM (provider + 2 tầng model DeepSeek)
+
+`auto` (mặc định cho Analyst/Proposal/Worker) thử các key theo thứ tự **DeepSeek → Anthropic → OpenAI → Gemini (cuối)**; key nào lỗi tự chuyển sang key kế tiếp.
+
+DeepSeek dùng **2 tầng model**, đổi theo loại việc:
+
+| Biến | Tầng | Dùng cho |
+|---|---|---|
+| `AIFOS_DEEPSEEK_MODEL` | pro (nặng) | Analyst (phân tích job) + Worker (làm sản phẩm) |
+| `AIFOS_DEEPSEEK_MODEL_LIGHT` | light (nhẹ) | Proposal (viết pitch) |
+
+Chỉnh nhanh ở `/admin` (mục **Provider Routing** + **Model Names**, đã có ô pro/light riêng) hoặc trong `.env`.
 
 ### 4.2. Tùy theo cách nhận nút bấm Telegram
 
@@ -131,7 +145,7 @@ Một lệnh tự động: kiểm tra `.env` (LLM, Telegram token + **chat_id**,
 
 | Biến | Mục đích |
 |---|---|
-| `AIFOS_OPENAI_API_KEY`, `AIFOS_ANTHROPIC_API_KEY` | LLM dự phòng (auto fallback khi Gemini lỗi) |
+| `GEMINI_API_KEY`, `AIFOS_OPENAI_API_KEY`, `AIFOS_ANTHROPIC_API_KEY` | LLM dự phòng cho `auto` khi DeepSeek lỗi (Gemini là phương án cuối) |
 | `AIFOS_ADMIN_PASSWORD` | Bật khi mở `/admin` ra ngoài localhost (không đặt = chỉ cho localhost) |
 | `AIFOS_WORKER_ENGINE` | `scaffold` (mặc định) hoặc `claude_code` (agent thật) |
 | `AIFOS_AGENT_*` | Tinh chỉnh engine claude_code (xem mục 6) |
@@ -280,7 +294,7 @@ Khởi động 4 service: `api` (uvicorn 8000), `worker` (Arq), `redis`, `postgr
 | Scout chạy nhưng API không nhận job | Sai cổng — API phải ở đúng `AIFOS_SCOUT_API_BASE_URL` (mặc định 8001) |
 | Telegram không có thông báo | Thiếu `AIFOS_TELEGRAM_BOT_TOKEN`/`DEFAULT_CHAT_ID`; hoặc chưa nhắn cho bot trước khi lấy chat id |
 | Bấm nút Telegram không phản hồi | Webhook chưa đăng ký (mode webhook) hoặc máy tắt (mode polling). Kiểm tra webhook ở `/admin` |
-| Job bị “mock”, kết quả vô nghĩa | Chưa điền `GEMINI_API_KEY`; hệ thống dùng LLM giả khi `AIFOS_ALLOW_MOCK_LLM=true` |
+| Job bị “mock”, kết quả vô nghĩa | Chưa điền LLM key nào (DeepSeek/Gemini/OpenAI/Anthropic); hệ thống dùng LLM giả khi `AIFOS_ALLOW_MOCK_LLM=true` |
 | Ingest trả 422 | `source` không nằm trong allowlist (`app/schemas.py`) |
 | Engine claude_code báo “CLI not found” | Chưa cài/đăng nhập Claude Code CLI; kiểm tra `AIFOS_CLAUDE_BIN` |
 | Threads chỉ trả tài khoản Meta | Chưa được App Review (Advanced Access). Dùng làn nhanh RSS trong lúc chờ |
@@ -290,7 +304,7 @@ Khởi động 4 service: `api` (uvicorn 8000), `worker` (Arq), `redis`, `postgr
 
 ## 13. Checklist “đi vào hoạt động thật”
 
-- [ ] `GEMINI_API_KEY` đã điền (hết chế độ mock).
+- [ ] `AIFOS_DEEPSEEK_API_KEY` đã điền (LLM chính, hết chế độ mock) — hoặc ít nhất 1 LLM key khác.
 - [ ] `AIFOS_TELEGRAM_BOT_TOKEN` + `DEFAULT_CHAT_ID` đã điền, đã nhận được tin test.
 - [ ] Chọn `AIFOS_TELEGRAM_MODE` (polling cho laptop / webhook cho server) và đã verify nút bấm phản hồi.
 - [ ] API chạy ở **cổng 8001** (hoặc đã sửa `AIFOS_SCOUT_API_BASE_URL`).
