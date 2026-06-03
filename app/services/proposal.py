@@ -36,15 +36,17 @@ class ProposalService:
 
     def _has_llm_key(self) -> bool:
         return bool(
-            self.settings.gemini_api_key
+            self.settings.deepseek_api_key
+            or self.settings.gemini_api_key
             or self.settings.anthropic_api_key
             or self.settings.openai_api_key
         )
 
     async def _generate_with_llm(self, job: Job, portfolio_markdown: str, provider: str) -> ProposalDraft:
-        llm_provider = provider if provider in {"gemini", "anthropic", "openai"} else "auto"
+        # Proposal is short outreach writing → DeepSeek light tier.
+        llm_provider = provider if provider in {"deepseek", "gemini", "anthropic", "openai"} else "auto"
         prompt = build_proposal_prompt(job, portfolio_markdown, self.settings.proposal_max_words)
-        content = await LLMTextService(self.settings, llm_provider).generate_text(
+        content = await LLMTextService(self.settings, llm_provider, light=True).generate_text(
             PROPOSAL_SYSTEM_PROMPT,
             prompt,
             temperature=0.4,

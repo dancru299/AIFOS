@@ -94,13 +94,15 @@ class AnalystService:
 
     def _has_llm_key(self) -> bool:
         return bool(
-            self.settings.gemini_api_key
+            self.settings.deepseek_api_key
+            or self.settings.gemini_api_key
             or self.settings.openai_api_key
             or self.settings.anthropic_api_key
         )
 
     async def _analyze_with_llm(self, job: Job, provider: str) -> AnalystDecision:
-        llm_provider = provider if provider in {"gemini", "openai", "anthropic"} else "auto"
+        # Analyst does analysis → DeepSeek heavy tier (default light=False).
+        llm_provider = provider if provider in {"deepseek", "gemini", "openai", "anthropic"} else "auto"
         prompt = build_analyst_prompt(job)
         content = await LLMTextService(self.settings, llm_provider).generate_text(
             ANALYST_SYSTEM_PROMPT,

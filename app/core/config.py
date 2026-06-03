@@ -72,6 +72,15 @@ class Settings(BaseSettings):
     # "polling" (the app pulls updates itself; works behind NAT / on a laptop).
     telegram_mode: str = "webhook"
 
+    # Primary LLM. DeepSeek's API is OpenAI-compatible; the "auto" provider chain
+    # tries it first and falls back to the others, with Gemini last.
+    deepseek_api_key: str | None = Field(default=None, validation_alias=AliasChoices("AIFOS_DEEPSEEK_API_KEY", "DEEPSEEK_API_KEY"))
+    # Two tiers: the heavy model handles analysis/generation (Analyst, Worker);
+    # the light model handles writing/summaries (Proposal). Both configurable.
+    deepseek_model: str = "deepseek-chat"
+    deepseek_model_light: str = "deepseek-chat"
+    deepseek_base_url: str = "https://api.deepseek.com"
+
     gemini_api_key: str | None = Field(default=None, validation_alias=AliasChoices("AIFOS_GEMINI_API_KEY", "GEMINI_API_KEY"))
     gemini_model: str = Field(default="gemini-2.5-flash", validation_alias=AliasChoices("AIFOS_GEMINI_MODEL", "GEMINI_MODEL"))
 

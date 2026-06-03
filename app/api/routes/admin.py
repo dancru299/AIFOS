@@ -12,9 +12,9 @@ from app.services.env_file import masked, read_env_values, update_env_values
 
 router = APIRouter(tags=["admin"])
 
-ANALYST_PROVIDERS = ("auto", "gemini", "openai", "mock")
-PROPOSAL_PROVIDERS = ("auto", "gemini", "anthropic", "openai", "mock")
-WORKER_PROVIDERS = ("auto", "gemini", "anthropic", "openai", "mock")
+ANALYST_PROVIDERS = ("auto", "deepseek", "gemini", "openai", "mock")
+PROPOSAL_PROVIDERS = ("auto", "deepseek", "gemini", "anthropic", "openai", "mock")
+WORKER_PROVIDERS = ("auto", "deepseek", "gemini", "anthropic", "openai", "mock")
 
 # Hosts allowed to reach /admin when no admin password is configured.
 _LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
@@ -58,6 +58,8 @@ async def admin_page(request: Request, saved: str | None = None, webhook_url: st
         analyst_provider=env_values.get("AIFOS_ANALYST_PROVIDER", settings.analyst_provider),
         proposal_provider=env_values.get("AIFOS_PROPOSAL_PROVIDER", settings.proposal_provider),
         worker_provider=env_values.get("AIFOS_WORKER_PROVIDER", settings.worker_provider),
+        deepseek_model=env_values.get("AIFOS_DEEPSEEK_MODEL", settings.deepseek_model),
+        deepseek_model_light=env_values.get("AIFOS_DEEPSEEK_MODEL_LIGHT", settings.deepseek_model_light),
         gemini_model=env_values.get("AIFOS_GEMINI_MODEL", settings.gemini_model),
         openai_model=env_values.get("AIFOS_OPENAI_MODEL", settings.openai_model),
         anthropic_model=env_values.get("AIFOS_ANTHROPIC_MODEL", settings.anthropic_model),
@@ -79,6 +81,7 @@ async def admin_page(request: Request, saved: str | None = None, webhook_url: st
         threads_target_usernames=env_values.get("AIFOS_THREADS_TARGET_USERNAMES", settings.threads_target_usernames),
         threads_keywords=env_values.get("AIFOS_THREADS_KEYWORDS", settings.threads_keywords),
         threads_token=env_values.get("AIFOS_THREADS_API_TOKEN"),
+        deepseek_key=env_values.get("AIFOS_DEEPSEEK_API_KEY") or env_values.get("DEEPSEEK_API_KEY"),
         gemini_key=env_values.get("GEMINI_API_KEY") or env_values.get("AIFOS_GEMINI_API_KEY"),
         openai_key=env_values.get("AIFOS_OPENAI_API_KEY"),
         anthropic_key=env_values.get("AIFOS_ANTHROPIC_API_KEY"),
@@ -96,9 +99,12 @@ async def update_admin_settings(
     analyst_provider: str = Form("auto"),
     proposal_provider: str = Form("auto"),
     worker_provider: str = Form("auto"),
+    deepseek_model: str = Form("deepseek-chat"),
+    deepseek_model_light: str = Form("deepseek-chat"),
     gemini_model: str = Form("gemini-2.5-flash"),
     openai_model: str = Form("gpt-4o-mini"),
     anthropic_model: str = Form("claude-3-5-sonnet-20241022"),
+    deepseek_api_key: str = Form(""),
     gemini_api_key: str = Form(""),
     openai_api_key: str = Form(""),
     anthropic_api_key: str = Form(""),
@@ -127,6 +133,8 @@ async def update_admin_settings(
         "AIFOS_ANALYST_PROVIDER": _valid_choice(analyst_provider, ANALYST_PROVIDERS, "auto"),
         "AIFOS_PROPOSAL_PROVIDER": _valid_choice(proposal_provider, PROPOSAL_PROVIDERS, "auto"),
         "AIFOS_WORKER_PROVIDER": _valid_choice(worker_provider, WORKER_PROVIDERS, "auto"),
+        "AIFOS_DEEPSEEK_MODEL": deepseek_model.strip() or "deepseek-chat",
+        "AIFOS_DEEPSEEK_MODEL_LIGHT": deepseek_model_light.strip() or "deepseek-chat",
         "AIFOS_GEMINI_MODEL": gemini_model.strip() or "gemini-2.5-flash",
         "AIFOS_OPENAI_MODEL": openai_model.strip() or "gpt-4o-mini",
         "AIFOS_ANTHROPIC_MODEL": anthropic_model.strip() or "claude-3-5-sonnet-20241022",
@@ -152,6 +160,8 @@ async def update_admin_settings(
     elif not current_env.get("AIFOS_TELEGRAM_WEBHOOK_SECRET"):
         updates["AIFOS_TELEGRAM_WEBHOOK_SECRET"] = token_urlsafe(24)
 
+    if deepseek_api_key.strip():
+        updates["AIFOS_DEEPSEEK_API_KEY"] = deepseek_api_key.strip()
     if gemini_api_key.strip():
         updates["GEMINI_API_KEY"] = gemini_api_key.strip()
     if openai_api_key.strip():
@@ -190,11 +200,14 @@ def _render_admin_page(
     analyst_provider: str,
     proposal_provider: str,
     worker_provider: str,
+    deepseek_model: str,
+    deepseek_model_light: str,
     gemini_model: str,
     openai_model: str,
     anthropic_model: str,
     telegram_chat_id: str,
     telegram_secret: str,
+    deepseek_key: str | None,
     gemini_key: str | None,
     openai_key: str | None,
     anthropic_key: str | None,
@@ -431,12 +444,13 @@ def _render_admin_page(
             {_select("worker_provider", WORKER_PROVIDERS, worker_provider)}
           </div>
         </div>
-        <p class="help"><code>auto</code> uses available keys in order. Workers use Gemini, Anthropic, OpenAI, then local mock fallback when enabled.</p>
+        <p class="help"><code>auto</code> tries configured keys in order: DeepSeek, Anthropic, OpenAI, then Gemini last (plus local mock fallback when enabled). DeepSeek uses its <b>pro</b> model for Analyst/Worker and its <b>light</b> model for Proposal.</p>
       </section>
 
       <section class="panel">
         <h2>Key Status</h2>
         <div class="status-list">
+          {_status_item("DeepSeek", deepseek_key)}
           {_status_item("Gemini", gemini_key)}
           {_status_item("OpenAI", openai_key)}
           {_status_item("Anthropic", anthropic_key)}
@@ -448,6 +462,16 @@ def _render_admin_page(
 
       <section class="panel">
         <h2>Model Names</h2>
+        <div class="row">
+          <div>
+            <label for="deepseek_model">DeepSeek model — pro (analyst, worker)</label>
+            <input id="deepseek_model" name="deepseek_model" value="{escape(deepseek_model)}">
+          </div>
+          <div>
+            <label for="deepseek_model_light">DeepSeek model — light (proposal)</label>
+            <input id="deepseek_model_light" name="deepseek_model_light" value="{escape(deepseek_model_light)}">
+          </div>
+        </div>
         <div class="row">
           <div>
             <label for="gemini_model">Gemini model</label>
@@ -468,17 +492,23 @@ def _render_admin_page(
         <h2>Replace Keys</h2>
         <div class="row">
           <div>
+            <label for="deepseek_api_key">DeepSeek API key</label>
+            <input id="deepseek_api_key" name="deepseek_api_key" placeholder="Leave blank to keep current key">
+          </div>
+          <div>
             <label for="gemini_api_key">Gemini API key</label>
             <input id="gemini_api_key" name="gemini_api_key" placeholder="Leave blank to keep current key">
           </div>
+        </div>
+        <div class="row">
           <div>
             <label for="openai_api_key">OpenAI API key</label>
             <input id="openai_api_key" name="openai_api_key" placeholder="Leave blank to keep current key">
           </div>
-        </div>
-        <div>
-          <label for="anthropic_api_key">Anthropic API key</label>
-          <input id="anthropic_api_key" name="anthropic_api_key" placeholder="Leave blank to keep current key">
+          <div>
+            <label for="anthropic_api_key">Anthropic API key</label>
+            <input id="anthropic_api_key" name="anthropic_api_key" placeholder="Leave blank to keep current key">
+          </div>
         </div>
       </section>
 

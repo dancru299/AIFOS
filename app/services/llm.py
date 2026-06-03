@@ -10,9 +10,11 @@ logger = logging.getLogger(__name__)
 
 
 class LLMTextService:
-    def __init__(self, settings: Settings, provider: str | None = None) -> None:
+    def __init__(self, settings: Settings, provider: str | None = None, *, light: bool = False) -> None:
         self.settings = settings
         self.provider = (provider or "auto").lower()
+        # When True, DeepSeek uses its light/cheaper model tier (no effect on other providers).
+        self.light = light
 
     async def generate_text(self, system_prompt: str, user_prompt: str, temperature: float = 0.35) -> str:
         chain = self._provider_chain()
@@ -34,6 +36,8 @@ class LLMTextService:
         raise RuntimeError("No configured LLM provider is available.")
 
     async def _generate_with(self, provider: str, system_prompt: str, user_prompt: str, temperature: float) -> str:
+        if provider == "deepseek":
+            return await self._generate_with_deepseek(system_prompt, user_prompt, temperature)
         if provider == "gemini":
             return await GeminiService(self.settings).generate_text(
                 user_prompt,
@@ -49,28 +53,66 @@ class LLMTextService:
     def _provider_chain(self) -> list[str]:
         """Ordered providers to try. An explicit provider is used alone; ``auto``
         falls through every configured key so a failing key can hand off to a
-        different one that is already configured."""
-        if self.provider in {"gemini", "openai", "anthropic"}:
+        different one that is already configured. DeepSeek is tried first and
+        Gemini last."""
+        if self.provider in {"deepseek", "gemini", "openai", "anthropic"}:
             return [self.provider]
         if self.provider == "mock":
             raise RuntimeError("Mock provider requested.")
 
         chain: list[str] = []
-        if self.settings.gemini_api_key:
-            chain.append("gemini")
+        if self.settings.deepseek_api_key:
+            chain.append("deepseek")
         if self.settings.anthropic_api_key:
             chain.append("anthropic")
         if self.settings.openai_api_key:
             chain.append("openai")
+        if self.settings.gemini_api_key:
+            chain.append("gemini")
         if not chain:
             raise RuntimeError("No LLM API key is configured.")
         return chain
 
     async def _generate_with_openai(self, system_prompt: str, user_prompt: str, temperature: float) -> str:
-        if not self.settings.openai_api_key:
-            raise RuntimeError("OpenAI API key is not configured.")
+        return await self._chat_completion(
+            endpoint="https://api.openai.com/v1/chat/completions",
+            api_key=self.settings.openai_api_key,
+            model=self.settings.openai_model,
+            provider_label="OpenAI",
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=temperature,
+        )
+
+    async def _generate_with_deepseek(self, system_prompt: str, user_prompt: str, temperature: float) -> str:
+        base_url = self.settings.deepseek_base_url.rstrip("/")
+        model = self.settings.deepseek_model_light if self.light else self.settings.deepseek_model
+        return await self._chat_completion(
+            endpoint=f"{base_url}/v1/chat/completions",
+            api_key=self.settings.deepseek_api_key,
+            model=model,
+            provider_label="DeepSeek",
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=temperature,
+        )
+
+    async def _chat_completion(
+        self,
+        *,
+        endpoint: str,
+        api_key: str | None,
+        model: str,
+        provider_label: str,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float,
+    ) -> str:
+        """Shared OpenAI-compatible chat-completions call (OpenAI, DeepSeek, ...)."""
+        if not api_key:
+            raise RuntimeError(f"{provider_label} API key is not configured.")
         payload = {
-            "model": self.settings.openai_model,
+            "model": model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -78,15 +120,10 @@ class LLMTextService:
             "temperature": temperature,
         }
         headers = {
-            "Authorization": f"Bearer {self.settings.openai_api_key}",
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
-        response = await request_with_retry(
-            "POST",
-            "https://api.openai.com/v1/chat/completions",
-            headers=headers,
-            json=payload,
-        )
+        response = await request_with_retry("POST", endpoint, headers=headers, json=payload)
         data = response.json()
         return data["choices"][0]["message"]["content"]
 
