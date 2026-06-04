@@ -29,6 +29,12 @@ os.environ["AIFOS_OPENAI_API_KEY"] = ""
 os.environ["AIFOS_ANTHROPIC_API_KEY"] = ""
 os.environ["GEMINI_API_KEY"] = ""
 os.environ["AIFOS_GEMINI_API_KEY"] = ""
+# Null DeepSeek too (it is the primary "auto" provider). Without this, a real
+# DEEPSEEK_API_KEY in a developer's .env leaks in on any get_settings cache_clear
+# and the analyst/proposal/worker make live network calls instead of using the
+# offline mock — making the suite non-hermetic.
+os.environ["AIFOS_DEEPSEEK_API_KEY"] = ""
+os.environ["DEEPSEEK_API_KEY"] = ""
 
 
 @pytest.fixture(scope="session")

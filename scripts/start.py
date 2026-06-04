@@ -58,6 +58,7 @@ def preflight(settings) -> bool:
 
     # --- LLM (cần để hết chế độ mock) ---
     llm_keys = {
+        "DeepSeek": settings.deepseek_api_key,
         "Gemini": settings.gemini_api_key,
         "OpenAI": settings.openai_api_key,
         "Anthropic": settings.anthropic_api_key,
@@ -67,10 +68,10 @@ def preflight(settings) -> bool:
         print(f"{OK} LLM key: {', '.join(present)} (chấm ROI + soạn proposal thật)")
         llm_ok = True
     elif settings.allow_mock_llm:
-        print(f"{WARN}LLM key: CHƯA có → chạy LLM giả (mock). Điền GEMINI_API_KEY để có kết quả thật.")
+        print(f"{WARN}LLM key: CHƯA có → chạy LLM giả (mock). Điền AIFOS_DEEPSEEK_API_KEY để có kết quả thật.")
         llm_ok = False
     else:
-        print(f"{BAD} LLM key: CHƯA có và mock đã tắt → pipeline sẽ lỗi. Điền GEMINI_API_KEY.")
+        print(f"{BAD} LLM key: CHƯA có và mock đã tắt → pipeline sẽ lỗi. Điền AIFOS_DEEPSEEK_API_KEY.")
         llm_ok = False
 
     # --- Telegram ---

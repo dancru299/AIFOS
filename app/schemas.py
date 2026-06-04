@@ -42,6 +42,7 @@ class JobRead(BaseModel):
     delivery_path: str | None
     status: JobStatus
     last_error: str | None
+    total_cost_usd: float | None = None
     created_at: datetime
     updated_at: datetime
 

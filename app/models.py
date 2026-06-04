@@ -65,6 +65,8 @@ class Job(Base):
     telegram_chat_id: Mapped[str | None] = mapped_column(String(64))
     telegram_alert_message_id: Mapped[int | None] = mapped_column(Integer)
     last_error: Mapped[str | None] = mapped_column(Text)
+    # Running total of LLM/agent API spend for this job (USD).
+    total_cost_usd: Mapped[float] = mapped_column(Float, default=0.0, server_default="0", nullable=False)
     status: Mapped[JobStatus] = mapped_column(
         Enum(JobStatus, native_enum=False),
         default=JobStatus.PENDING,
@@ -80,6 +82,26 @@ class Job(Base):
     proposal_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     project_tasks: Mapped[list["ProjectTask"]] = relationship(back_populates="job", cascade="all, delete-orphan")
+    events: Mapped[list["JobEvent"]] = relationship(
+        back_populates="job",
+        cascade="all, delete-orphan",
+        order_by="JobEvent.id",
+    )
+
+
+class JobEvent(Base):
+    """Timestamped record of one job state transition (the delivery timeline)."""
+
+    __tablename__ = "job_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    job_id: Mapped[str] = mapped_column(String(64), ForeignKey("jobs.id"), nullable=False)
+    from_status: Mapped[str | None] = mapped_column(String(32))
+    to_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    detail: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    job: Mapped[Job] = relationship(back_populates="events")
 
 
 class ProjectTask(Base):

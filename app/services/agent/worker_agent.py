@@ -27,6 +27,7 @@ class ReviewResult:
     blockers: list[str]
     checklist: list[dict]
     raw: dict
+    cost_usd: float | None = None
 
 
 async def plan(job: Job, folder: Path, settings: Settings) -> AgentRun:
@@ -108,8 +109,11 @@ async def review(job: Job, folder: Path, settings: Settings) -> ReviewResult:
             blockers=[run.error or "review failed"],
             checklist=[],
             raw={},
+            cost_usd=run.cost_usd,
         )
-    return _review_from_text(run.result_text)
+    result = _review_from_text(run.result_text)
+    result.cost_usd = run.cost_usd
+    return result
 
 
 def _review_from_text(text: str) -> ReviewResult:

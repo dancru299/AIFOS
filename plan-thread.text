@@ -1,0 +1,92 @@
+🛑 Thực tế về Threads API chính thức (Cập nhật mới nhất)
+Meta đã mở rộng Threads API cho tất cả nhà phát triển, NHƯNG nó có một giới hạn rất lớn so với Twitter API:
+
+Threads API HIỆN TẠI CHƯA CÓ tính năng "Tìm kiếm bài đăng toàn mạng xã hội theo từ khóa" (Global Search API).
+
+Hạn mức và tính năng hiện tại của Threads API chính thức chỉ tập trung vào việc quản lý tài khoản định danh:
+
+Đăng bài, trả lời bình luận (Publish & Reply).
+
+Xem thông tin chi tiết (Analytics) của chính tài khoản của bạn.
+
+Lấy danh sách bài đăng (Media Feed) của chính tài khoản của bạn.
+
+💡 Tóm lại: Bạn không thể dùng Threads API chính thức để gõ lệnh "Tìm cho tôi tất cả các bài viết có chữ 'hire programmer' trên toàn thế giới" giống như Twitter được. Meta vẫn đang bóp tính năng này để bảo vệ quyền riêng tư dữ liệu.
+
+🛠️ Giải pháp kỹ thuật thay thế (Đúng luật & Khả thi cho Solopreneur)
+Đừng lo, "mỏ vàng" này vẫn có thể đào được nếu bạn thay đổi góc nhìn kỹ thuật một chút. Thay vì quét mù toàn mạng xã hội, hãy biến Agent của bạn thành một "Kính viễn vọng" tập trung vào danh sách mục tiêu.
+
+Giải pháp: Thu thập dựa trên User ID (User-Centric Scouting)
+Thay vì tìm từ khóa chung chung, bạn hãy lên Threads, lập ra danh sách khoảng 50 - 100 tài khoản "Đầu mối" (Các Indie Hacker nổi tiếng, các Founder hay tuyển người, các Hub công nghệ lớn).
+
+Threads API cho phép bạn đọc dữ liệu công khai của một User cụ thể nếu bạn có ID của họ.
+
+Luồng hoạt động của Agent:
+Bước 1 (Lập danh sách): Bạn lưu danh sách username hoặc user_id của các khách hàng tiềm năng vào một Database nhỏ (hoặc file JSON).
+
+Bước 2 (Quét định kỳ): Cứ 30 phút một lần, Agent của bạn sẽ duyệt qua danh sách này, gọi API để lấy các bài đăng mới nhất (Media Feed) của từng người.
+
+Bước 3 (Lọc từ khóa): Code của bạn sẽ tự động quét nội dung text của các bài đăng đó để tìm từ khóa: fix bug, need a dev, hiring, script, MVP.
+
+Bước 4 (Bắn thông báo): Nếu khớp từ khóa, Agent sẽ lập tức gửi thông báo về Telegram hoặc Discord của bạn để bạn nhảy vào "giật job" ngay lập tức.
+
+📜 Hướng dẫn Code minh họa cho Threads Scout Agent
+Dưới đây là cấu trúc logic bằng Python sử dụng API chính thức của Threads để cào bài viết theo danh sách User mục tiêu:
+
+Python
+import requests
+import time
+
+# Cấu hình Token và danh sách mục tiêu
+THREADS_ACCESS_TOKEN = "MÃ_TRUY_CẬP_THREADS_API_CỦA_BẠN"
+TARGET_USERS = ["indie_hacker_A", "solopreneur_B", "startup_founder_C"]
+KEYWORDS = ["need a dev", "fix bug", "mvp", "auto script", "hiring"]
+
+def get_user_media(user_id):
+    """Gọi Threads API để lấy danh sách bài đăng của 1 User"""
+    url = f"https://graph.threads.net/v1.0/{user_id}/media"
+    params = {
+        "fields": "id,media_product_type,media_type,text,timestamp,username",
+        "access_token": THREADS_ACCESS_TOKEN
+    }
+    try:
+        response = requests.get(url, params=params)
+        return response.json().get('data', [])
+    except Exception as e:
+        print(f"Lỗi khi gọi API cho user {user_id}: {e}")
+        return []
+
+def scout_threads():
+    print("--- Khởi động Threads Scout Agent ---")
+    for username in TARGET_USERS:
+        # Lưu ý: Thường bạn cần chuyển đổi username thành Threads User ID trước
+        # Ở đây giả định bạn đã có ID hoặc API hỗ trợ đọc qua định danh
+        posts = get_user_media(username)
+        
+        for post in posts:
+            text_content = post.get('text', '')
+            if not text_content:
+                continue
+                
+            # Kiểm tra từ khóa
+            for keyword in KEYWORDS:
+                if keyword.lower() in text_content.lower():
+                    print(f"🚨 PHÁT HIỆN JOB MỚI TỪ @{username}!")
+                    print(f"Nội dung: {text_content}")
+                    print(f"Link bài viết: https://www.threads.net/@{username}/post/{post['id']}")
+                    print("-" * 50)
+                    
+                    # Thêm code bắn thông báo Telegram ở đây để chốt đơn sớm
+                    break 
+
+# Chạy định kỳ mỗi 30 phút (1800 giây)
+while True:
+    scout_threads()
+    print("Agent đang ngủ 30 phút trước phiên quét tiếp theo...")
+    time.sleep(1800)
+🔥 Bí kíp để Agent này mang lại "Tiền" cho bạn
+Vì chúng ta không thể quét toàn mạng xã hội, sự khác biệt giữa một Agent kiếm được tiền và một Agent vô dụng nằm ở Chất lượng của Danh sách mục tiêu (Target List).
+
+Săn cá mập: Hãy dành 1-2 ngày đầu tiên lướt Threads bằng tay. Tìm các hashtag như #buildinpublic, #indiehackers, #solopreneur. Thấy ông nào hay đăng tiến độ dự án thì lưu ID lại ngay. Họ chính là những người dễ thiếu nguồn lực và cần thuê ngoài nhất.
+
+Tối ưu hóa Rate Limit: Tần suất 30 phút/lần của bạn là rất an toàn. Giới hạn của Meta thường tính theo cơ chế 200 requests/giờ/người dùng. Với danh sách khoảng 50-100 người, việc giãn cách 30 phút hoàn toàn không lo bị block.

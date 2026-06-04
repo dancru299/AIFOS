@@ -108,7 +108,9 @@ class Settings(BaseSettings):
 
     # Worker execution engine: "scaffold" (one-shot LLM files) or "claude_code"
     # (autonomous Claude Code agent that plans, codes, and tests in a real folder).
-    worker_engine: str = "scaffold"
+    # Default is the agentic engine — the scaffold path only produces review-ready
+    # starters, not finished deliverables.
+    worker_engine: str = "claude_code"
     # Where the claude_code engine does real work. Each job gets a subfolder here;
     # you open it to review. Point this at a folder you control.
     delivery_root: str = "storage/deliveries"
@@ -117,17 +119,24 @@ class Settings(BaseSettings):
     # Require human approval of the agent's PLAN.md before it executes.
     agent_plan_gate: bool = True
     agent_max_turns: int = 60
-    agent_max_repairs: int = 1
+    # How many extra execute+QA cycles the self-healing loop may run after the
+    # first attempt (total attempts = agent_max_repairs + 1).
+    agent_max_repairs: int = 2
     agent_run_timeout_seconds: int = 1800
+    # Run a deterministic QA gate (real py_compile/ruff/build, exit-code checked)
+    # alongside the LLM reviewer, so delivery requires the work to actually
+    # build/compile — not just the agent grading its own homework.
+    agent_quality_gate: bool = True
+    agent_quality_gate_timeout_seconds: int = 180
     # Claude Code permission mode for the worker. "bypassPermissions" lets the
     # agent run shell commands without prompts (the only mode that works headless
     # on Windows); "default"/"acceptEdits" enforce the allow/deny command lists
     # (works on Linux/macOS/containers but blocks many commands on Windows).
     agent_permission_mode: str = "bypassPermissions"
-    # Opt-in: under bypassPermissions the allow/deny lists are ignored, so enable
-    # this to install a PreToolUse hook (guard_hook.py) that denies destructive
-    # Bash commands at runtime. Default off = unchanged behavior.
-    agent_enforce_guardrail_hook: bool = False
+    # Under bypassPermissions the allow/deny lists are ignored, so this installs a
+    # PreToolUse hook (guard_hook.py) that denies destructive Bash commands at
+    # runtime. On by default — it is the only runtime guardrail in that mode.
+    agent_enforce_guardrail_hook: bool = True
 
     @property
     def project_root(self) -> Path:

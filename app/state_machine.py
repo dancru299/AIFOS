@@ -1,4 +1,4 @@
-from app.models import Job, JobStatus
+from app.models import Job, JobEvent, JobStatus
 
 ALLOWED_TRANSITIONS: dict[JobStatus, set[JobStatus]] = {
     JobStatus.PENDING: {JobStatus.ANALYZING},
@@ -20,7 +20,7 @@ ALLOWED_TRANSITIONS: dict[JobStatus, set[JobStatus]] = {
 }
 
 
-def transition_job(job: Job, next_status: JobStatus) -> None:
+def transition_job(job: Job, next_status: JobStatus, detail: str | None = None) -> None:
     if job.status == next_status:
         return
 
@@ -28,4 +28,7 @@ def transition_job(job: Job, next_status: JobStatus) -> None:
     if next_status not in allowed:
         raise ValueError(f"Invalid job status transition: {job.status.value} -> {next_status.value}")
 
+    # Record the transition on the timeline. Appending to the relationship lets
+    # the surrounding session_scope persist it on commit (job is always attached).
+    job.events.append(JobEvent(from_status=job.status.value, to_status=next_status.value, detail=detail))
     job.status = next_status

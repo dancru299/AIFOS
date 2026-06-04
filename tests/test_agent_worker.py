@@ -166,6 +166,68 @@ async def test_execute_approved_plan_completes(agent_env, monkeypatch):
         _delete(job_id)
 
 
+async def test_quality_gate_blocks_delivery_when_code_broken(agent_env, monkeypatch):
+    """Even if the LLM reviewer approves, broken code must not be delivered."""
+
+    async def fake_execute(job, folder, settings, previous_review=None):
+        # Missing colon -> py_compile (and the deterministic gate) fail.
+        (folder / "main.py").write_text("def add(a, b)\n    return a + b\n", encoding="utf-8")
+        return AgentRun(ok=True)
+
+    async def fake_review(job, folder, settings):
+        return worker_agent.ReviewResult(
+            completion_percent=97, passed=True, summary="LGTM", blockers=[], checklist=[], raw={}
+        )
+
+    monkeypatch.setattr(worker_agent, "execute", fake_execute)
+    monkeypatch.setattr(worker_agent, "review", fake_review)
+
+    job_id = _make_job("https://ex.test/agent-gate", JobStatus.IN_PROGRESS)
+    with session_scope() as db:
+        job = db.get(Job, job_id)
+        folder = create_job_folder(job, get_settings())
+        job.workspace_path = str(folder)
+    try:
+        await pipeline.execute_approved_plan(job_id)
+        with session_scope() as db:
+            job = db.get(Job, job_id)
+            assert job.status == JobStatus.QA_FAILED
+            assert job.delivery_path is None
+        assert (folder / "qa" / "gate.json").exists()
+    finally:
+        _delete(job_id)
+
+
+async def test_execute_accumulates_cost_and_logs_timeline(agent_env, monkeypatch):
+    async def fake_execute(job, folder, settings, previous_review=None):
+        (folder / "main.py").write_text("x = 1\n", encoding="utf-8")
+        return AgentRun(ok=True, cost_usd=0.01)
+
+    async def fake_review(job, folder, settings):
+        return worker_agent.ReviewResult(
+            completion_percent=95, passed=True, summary="ok", blockers=[], checklist=[], raw={}, cost_usd=0.02
+        )
+
+    monkeypatch.setattr(worker_agent, "execute", fake_execute)
+    monkeypatch.setattr(worker_agent, "review", fake_review)
+
+    job_id = _make_job("https://ex.test/agent-cost", JobStatus.IN_PROGRESS)
+    with session_scope() as db:
+        job = db.get(Job, job_id)
+        folder = create_job_folder(job, get_settings())
+        job.workspace_path = str(folder)
+    try:
+        await pipeline.execute_approved_plan(job_id)
+        with session_scope() as db:
+            job = db.get(Job, job_id)
+            assert job.status == JobStatus.DELIVERY_READY
+            assert job.total_cost_usd == pytest.approx(0.03)
+            transitions = [(event.from_status, event.to_status) for event in job.events]
+            assert ("qa_running", "delivery_ready") in transitions
+    finally:
+        _delete(job_id)
+
+
 async def test_execute_repairs_then_qa_fails(agent_env, monkeypatch):
     async def fake_execute(job, folder, settings, previous_review=None):
         return AgentRun(ok=True)

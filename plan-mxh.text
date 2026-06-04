@@ -1,0 +1,122 @@
+Tuân thủ nghiêm ngặt tư duy "Defensive Engineering" (Kỹ thuật phòng thủ) an toàn tuyệt đối mà chúng ta đã thống nhất, dưới đây là bản kế hoạch triển khai chi tiết, kiến trúc code và cách tích hợp mượt mà cả 3 nguồn này vào hệ thống hiện tại của bạn.
+
+KẾ HOẠCH CHI TIẾT TÍCH HỢP THREADS, FACEBOOK, YOUTUBE (AI-FOS v1.1)
+📌 HƯỚNG 1: THREADS SCOUT AGENT (Mỏ vàng Solopreneur)
+Văn hóa Threads thiên về viết text ngắn, trực diện và cập nhật theo thời gian thực. Các nhà sáng lập, indie hacker nước ngoài rất chuộng đăng tin tìm người làm task nhanh (MVP, Fix bug, Auto script) trên này.
+
+1. Giải pháp kỹ thuật (Hợp pháp & Không Scrape)
+Sử dụng Meta Threads API chính thức (Phát hành rộng rãi cho Developer). API này cho phép tìm kiếm và đọc các bài đăng công khai một cách hợp pháp.
+
+Tần suất quét: 30 phút/lần (Tránh cạn hạn mức API rate limit của Meta).
+
+2. Các file cần thêm mới/chỉnh sửa
+Thêm mới: app/services/scouts/threads.py (Chứa logic gọi API Meta).
+
+Chỉnh sửa: scripts/run_scouts.py (Đăng ký module Threads vào runner chung).
+
+Chỉnh sửa: app/api/routes/admin.py (Thêm ô cấu hình THREADS_API_BEARER_TOKEN và danh sách THREADS_KEYWORDS_FILTER).
+
+3. Cấu trúc Code Logic (threads.py)
+Python
+import httpx
+from app.config import settings
+
+async def fetch_threads_jobs():
+    # Sử dụng endpoint search chính thức của Threads API
+    url = "https://graph.threads.net/v1.0/threads/search"
+    headers = {"Authorization": f"Bearer {settings.THREADS_API_TOKEN}"}
+    
+    # Định nghĩa các từ khóa ngách chất lượng cao
+    keywords = ["looking for dev", "hiring freelancer", "need a landing page", "hire ghostwriter"]
+    all_jobs = []
+
+    async with httpx.AsyncClient() as client:
+        for query in keywords:
+            params = {"q": query, "fields": "id,text,permalink,timestamp,username"}
+            response = await client.get(url, headers=headers, params=params)
+            
+            if response.status_code == 200:
+                posts = response.json().get("data", [])
+                for post in posts:
+                    # Normalize dữ liệu chuẩn theo cấu trúc AI-FOS /ingest
+                    job_data = {
+                        "source": "threads",
+                        "external_url": post["permalink"],
+                        "title": f"Threads job from @{post['username']}",
+                        "description_raw": post["text"]
+                    }
+                    all_jobs.append(job_data)
+    return all_jobs
+📌 HƯỚNG 2: PUBLIC FACEBOOK PAGES (Social Listening thông qua RSS Bridge)
+Facebook Page công khai (nhất là các trang cộng đồng Remote Job Quốc tế, trang của các Agency nước ngoài) là nguồn việc rất tốt. Nhưng Facebook quét Playwright/Selenium đăng nhập cực kỳ gắt. Chúng ta sẽ dùng Kiến trúc Không-Mã-Nguồn-Mới (Zero-New-Code) dựa trên hạ tầng Generic RSS Adapter bạn đã viết.
+
+1. Giải pháp kỹ thuật (An toàn tuyệt đối)
+Sử dụng một dịch vụ trung gian mã nguồn mở như RSSHub hoặc các dịch vụ thương mại như FetchRSS / RSS.app. Các dịch vụ này chuyên làm nhiệm vụ chuyển đổi luồng bài đăng (Feed) của một Fanpage công khai thành một đường dẫn RSS Feed chuẩn.
+
+Bạn hoàn toàn vô hình vì các dịch vụ trung gian này chịu trách nhiệm chịu tải và phân tách dữ liệu cho bạn.
+
+2. Các bước thực hiện (Không cần code thêm Backend)
+Bạn thu thập link của 5-10 Facebook Pages chất lượng cao về Freelance/Remote quốc tế (Ví dụ: Các nhóm Remote Web Dev, Copywriting Hub).
+
+Bỏ link Page vào RSS.app hoặc host riêng một bản RSSHub để lấy Link RSS đầu ra (Định dạng: [https://rss.app/feeds/xyz.xml](https://rss.app/feeds/xyz.xml)).
+
+Truy cập vào giao diện UI Admin hiện tại của bạn ([http://127.0.0.1:8001/admin](http://127.0.0.1:8001/admin)).
+
+Paste các đường link RSS này vào mục Scout Sources / Open RSS URLs có sẵn.
+
+File app/services/scouts/rss.py và runner.py của bạn sẽ tự động kéo dữ liệu về, đẩy qua Analyst Agent để chấm điểm ROI và bắn về Telegram y hệt như WeworkRemotely.
+
+📌 HƯỚNG 3: YOUTUBE TAB COMMUNITY & DESCRIPTION (Săn việc từ VVIP)
+Các YouTuber công nghệ hoặc các doanh nghiệp vận hành kênh YouTube thường đăng tin tuyển dụng tại 2 nơi: Tab Cộng đồng (Community) hoặc Phần mô tả Video (Description) của các video hướng dẫn làm sản phẩm/SaaS. Khách hàng ở đây thường có ngân sách rất lớn (trả bằng USD xứng đáng).
+
+1. Giải pháp kỹ thuật
+Sử dụng YouTube Data API v3 chính thức thông qua Google Cloud Console. Hạn mức miễn phí là 10.000 quota/ngày (Quá đủ cho hệ thống cá nhân).
+
+Tập trung quét danh sách các Channel ID của các Tech Creators khét tiếng hoặc các Solopreneurs nổi tiếng trên thế giới.
+
+2. Các file cần thêm mới/chỉnh sửa
+Thêm mới: app/services/scouts/youtube.py
+
+Chỉnh sửa: scripts/run_scouts.py
+
+3. Cấu trúc Code Logic (youtube.py)
+Python
+import httpx
+from app.config import settings
+
+async def fetch_youtube_jobs():
+    # Endpoint tìm kiếm hoạt động mới nhất của các kênh mục tiêu
+    url = "https://www.googleapis.com/youtube/v3/search"
+    
+    # Danh sách các channel ID của các nhà sáng lập/tech creator bạn nhắm tới
+    target_channels = ["CHANNEL_ID_1", "CHANNEL_ID_2"] 
+    all_jobs = []
+
+    async with httpx.AsyncClient() as client:
+        for channel_id in target_channels:
+            params = {
+                "key": settings.YOUTUBE_API_KEY,
+                "channelId": channel_id,
+                "part": "snippet",
+                "order": "date",
+                "maxResults": 3,
+                "type": "video" # Hoặc quét lấy các hoạt động bài post
+            }
+            response = await client.get(url, params=params)
+            if response.status_code == 200:
+                items = response.json().get("items", [])
+                for item in items:
+                    description = item["snippet"]["description"]
+                    title = item["snippet"]["title"]
+                    video_id = item["id"]["videoId"]
+                    
+                    # Kiểm tra xem mô tả video có chứa từ khóa tuyển dụng không
+                    if any(word in description.lower() for word in ["hiring", "looking for", "contact me at"]):
+                        job_data = {
+                            "source": "youtube",
+                            "external_url": f"https://www.youtube.com/watch?v={video_id}",
+                            "title": f"YouTube Opportunity: {title}",
+                            "description_raw": description
+                        }
+                        all_jobs.append(job_data)
+    return all_jobs

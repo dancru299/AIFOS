@@ -1,5 +1,26 @@
+import os
 from pathlib import Path
 from zipfile import ZipFile
+
+import pytest
+
+from app.core.config import get_settings
+
+
+@pytest.fixture
+def scaffold_engine():
+    """Pin the legacy scaffold engine for tests that assert its ZIP/QA behavior.
+
+    The global default is now the claude_code agent, so these scaffold-path tests
+    opt in explicitly.
+    """
+    os.environ["AIFOS_WORKER_ENGINE"] = "scaffold"
+    get_settings.cache_clear()
+    try:
+        yield
+    finally:
+        os.environ.pop("AIFOS_WORKER_ENGINE", None)
+        get_settings.cache_clear()
 
 
 def test_ingest_runs_analysis_pipeline(client):
@@ -122,7 +143,7 @@ def test_reject_moves_job_to_rejected(client):
     assert job_response.json()["status"] == "rejected"
 
 
-def test_start_work_creates_workspace_runs_qa_and_delivery(client):
+def test_start_work_creates_workspace_runs_qa_and_delivery(client, scaffold_engine):
     ingest_response = client.post(
         "/api/v1/jobs/ingest",
         json={
@@ -176,7 +197,7 @@ def test_start_work_creates_workspace_runs_qa_and_delivery(client):
     assert "qa_reports/qa_report.json" in names
 
 
-def test_telegram_start_work_callback_creates_delivery(client):
+def test_telegram_start_work_callback_creates_delivery(client, scaffold_engine):
     ingest_response = client.post(
         "/api/v1/jobs/ingest",
         json={

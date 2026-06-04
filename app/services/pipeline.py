@@ -1,5 +1,6 @@
 import json
 import logging
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -12,7 +13,7 @@ from app.services.analyst import AnalystService
 from app.services.delivery import DeliveryService
 from app.services.portfolio import PortfolioService
 from app.services.proposal import ProposalService
-from app.services.qa import QAService
+from app.services.qa import GateResult, QAService, run_quality_gate
 from app.services.telegram import TelegramService
 from app.services.workers import WorkerContext, get_worker_for_scope
 from app.services.workspace import WorkspaceService
@@ -306,6 +307,7 @@ async def start_planning(job_id: str, instructions: str | None = None, callback_
         job.delivery_path = None
 
     run = await worker_agent.plan(job, folder, settings)
+    _accumulate_cost(job_id, run.cost_usd)
     plan_path = folder / "PLAN.md"
 
     if not run.ok or not plan_path.exists():
@@ -383,6 +385,7 @@ async def execute_approved_plan(job_id: str, callback_chat_id: str | int | None 
                 return
 
         run = await worker_agent.execute(job, folder, settings, previous_review)
+        _accumulate_cost(job_id, run.cost_usd)
         if not run.ok:
             failed_job = None
             with session_scope() as db:
@@ -402,11 +405,29 @@ async def execute_approved_plan(job_id: str, callback_chat_id: str | int | None 
                 transition_job(job, JobStatus.QA_RUNNING)
 
         review_result = await worker_agent.review(job, folder, settings)
+        _accumulate_cost(job_id, review_result.cost_usd)
         _write_review_report(folder, review_result, attempt)
+
+        # Deterministic gate: real compile/build with exit codes checked. Delivery
+        # requires BOTH the LLM reviewer and this gate to pass, so the agent can't
+        # ship code that doesn't build just because it graded itself highly.
+        gate: GateResult | None = None
+        if settings.agent_quality_gate:
+            gate = run_quality_gate(folder, timeout=settings.agent_quality_gate_timeout_seconds)
+            _write_gate_report(folder, gate, attempt)
+
+        verdict = review_result
+        if gate is not None and not gate.passed:
+            blockers = list(review_result.blockers) + [f"[QA gate] {failure}" for failure in gate.failures]
+            summary = review_result.summary
+            if review_result.passed:
+                summary = "Reviewer approved, but the QA gate found build/compile errors."
+            verdict = replace(review_result, passed=False, blockers=blockers, summary=summary)
+
         # Surface anything the agent explicitly flagged for the human.
         questions = read_text_if_exists(folder / "QUESTIONS.md", limit=1500)
 
-        if review_result.passed:
+        if verdict.passed:
             ready_job = None
             with session_scope() as db:
                 job = db.get(Job, job_id)
@@ -417,23 +438,42 @@ async def execute_approved_plan(job_id: str, callback_chat_id: str | int | None 
                         transition_job(job, JobStatus.DELIVERY_READY)
                     ready_job = job
             if ready_job:
-                await telegram_service.send_review_ready(ready_job, review_result, callback_chat_id, questions=questions)
+                await telegram_service.send_review_ready(ready_job, verdict, callback_chat_id, questions=questions)
             return
 
-        previous_review = review_result
+        previous_review = verdict
         should_retry = attempt < max_attempts
         final_job = None
         with session_scope() as db:
             job = db.get(Job, job_id)
             if job:
-                job.last_error = f"{review_result.completion_percent}% complete: {review_result.summary}"
+                job.last_error = f"{verdict.completion_percent}% complete: {verdict.summary}"
                 if job.status == JobStatus.QA_RUNNING:
                     transition_job(job, JobStatus.IN_PROGRESS if should_retry else JobStatus.QA_FAILED)
                 if not should_retry:
                     final_job = job
         if final_job:
-            await telegram_service.send_review_ready(final_job, review_result, callback_chat_id, questions=questions)
+            await telegram_service.send_review_ready(final_job, verdict, callback_chat_id, questions=questions)
             return
+
+
+def _accumulate_cost(job_id: str, cost: float | None) -> None:
+    """Add one agent run's USD cost to the job's running total."""
+    if not cost:
+        return
+    with session_scope() as db:
+        job = db.get(Job, job_id)
+        if job is not None:
+            job.total_cost_usd = (job.total_cost_usd or 0.0) + float(cost)
+
+
+def _write_gate_report(folder: Path, gate: GateResult, attempt: int) -> None:
+    qa_dir = folder / "qa"
+    qa_dir.mkdir(parents=True, exist_ok=True)
+    report = {"attempt": attempt, **gate.to_dict()}
+    report_text = json.dumps(report, indent=2, ensure_ascii=False)
+    (qa_dir / f"gate_attempt_{attempt}.json").write_text(report_text, encoding="utf-8")
+    (qa_dir / "gate.json").write_text(report_text, encoding="utf-8")
 
 
 def _write_review_report(folder: Path, review_result: "worker_agent.ReviewResult", attempt: int) -> None:
